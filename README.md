@@ -2,7 +2,7 @@
 
 ## Introduction
 
-BLINK is a Pythong library for *entity linking* to a knowledge base (KB) that combines enterprise-search platform with state-of-the-art natural language understanding methods. 
+BLINK is a Python library for *entity linking* to a knowledge base (KB) that combines enterprise-search platform with state-of-the-art natural language understanding methods. 
 In particular, BLINK contains three main components:
 - _named entity recognition (NER)_
 - _candidate retrieval_
