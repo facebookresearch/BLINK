@@ -4,7 +4,7 @@ emoji==0.5.3
 regex==2019.8.19
 matplotlib==3.1.0
 tqdm==4.32.1
-nltk==3.4.4
+nltk==3.4.5
 numpy==1.17.2
 segtok==1.5.7
 flair==0.4.3
