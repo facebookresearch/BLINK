@@ -13,7 +13,7 @@ For the _NER_ component BLINK uses [flair](https://github.com/zalandoresearch/fl
 For _candidate retrieval_ the [Solr](https://lucene.apache.org/solr) search engine is used.
 BLINK provides scripts to download, process and link the lasest wikipedia and wikidata dumps, ingest the resulting 5.9M entities into the search engine index, as well as scripts to evaluate the retrieval phase on well known benchmarking data.
 
-For _candidate ranking_ BLINK uses a model based on _BERT-large-cased_ trained on the [AIDA corpus](https://www.mpi-inf.mpg.de/departments/databases-and-information-systems/research/ambiverse-nlu/aida) with the [pytorch-transformers](https://github.com/huggingface/transformers) library. Scripts to train and evaluate the ranking model are provided.
+For _candidate ranking_ BLINK uses a model based on _BERT-large-cased_ trained on the [AIDA corpus](https://www.mpi-inf.mpg.de/departments/databases-and-information-systems/research/ambiverse-nlu/aida) with the [pytorch-transformers](https://github.com/huggingface/transformers) library. Scripts to train and evaluate the ranking model are provided. A pre-trained model is available [here](http://dl.fbaipublicfiles.com/BLINK/models.zip).
 
 These three components could be extended and upgraded independently. 
 On the retrieval part, the candidate catalog can be replaced or extended, and the retrieval model upgraded.
@@ -84,15 +84,23 @@ python blink/candidate_retrieval/json_data_generation.py
 
 ### 3. Candidate Ranking
 
-With the data in place, we now train and evaluate a BERT based ranker
+We have released a pre-trained model for this component based on _BERT-large-cased_.
+To use our model, execute:
+```
+wget http://dl.fbaipublicfiles.com/BLINK/models.zip
+unzip models.zip
+rm models.zip
+```
+
+If you prefer to train your BERT based ranker model, you can use the following command (after having executed all the steps in the Candidate Retrieval section):
 ```
 python blink/candidate_ranking/train.py \
 --model_output_path models/bert_large_ranking \
 --evaluate --full_evaluation --dataparallel_bert
 ```
-In order to facilitate the training with 80 candidates with BERT-large, using 512 tokens representations, 8 x 32 Gb GPUs are needed. Alternatively, the requirements can be substatially alleviated by varying any of the aforementioned parameters. 
+Note that 8 x 32 Gb GPUs are needed to train the model considering 80 candidates with BERT-large and using 512 tokens representations. You can reduce the computational requirements by varying some of the parameters (e.g., candidates and/or max number of tokens considered). 
 
-To only evaluate an already trained model use the following command
+To evaluate the ranking model use the following command:
 ```
 python blink/candidate_ranking/evaluate.py \
 --path_to_model models/bert_large_ranking \
@@ -102,7 +110,7 @@ python blink/candidate_ranking/evaluate.py \
 ```
 
 ## Use BLINK
-Once the Solr instance has been setup and a trained model is available, you can use blink in the following way
+Once the Solr instance has been setup and a trained ranker model is available, you can use blink in the following way
 
 ```
 python blink/main.py \
