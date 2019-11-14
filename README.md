@@ -1,4 +1,5 @@
 # BLINK: Better entity LINKing
+<img align="middle" src="img/logo.png" height="256" alt="BLINK">
 
 ## Introduction
 
