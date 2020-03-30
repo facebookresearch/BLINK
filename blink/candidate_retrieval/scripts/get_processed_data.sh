@@ -22,7 +22,7 @@ en_index_precomputed="$data_folder_path/index_enwiki.db"
 
 if [[ ! -f $wikipedia_xml_dump ]]; then
   echo "downloading $wikipedia_xml_dump"
-  wget https://dumps.wikimedia.org/enwiki/20190801/enwiki-20190801-pages-articles.xml.bz2 -O $wikipedia_xml_dump
+  wget https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-pages-articles.xml.bz2 -O $wikipedia_xml_dump
 fi
 
 if [[ ! -f $wikidata_json_dump ]]; then
