@@ -17,10 +17,11 @@ from collections import OrderedDict
 from pytorch_transformers.modeling_utils import CONFIG_NAME, WEIGHTS_NAME
 from tqdm import tqdm
 
-from bert_reranking import BertReranker
+from blink.candidate_ranking.bert_reranking import BertReranker
+from blink.biencoder.biencoder import BiEncoderRanker
 
 
-def read_dataset(dataset_name, preprocessed_json_data_parent_folder):
+def read_dataset(dataset_name, preprocessed_json_data_parent_folder, debug=False):
     file_name = "{}.jsonl".format(dataset_name)
     txt_file_path = os.path.join(preprocessed_json_data_parent_folder, file_name)
 
@@ -29,6 +30,8 @@ def read_dataset(dataset_name, preprocessed_json_data_parent_folder):
     with io.open(txt_file_path, mode="r", encoding="utf-8") as file:
         for line in file:
             samples.append(json.loads(line.strip()))
+            if debug and len(samples) > 200:
+                break
 
     return samples
 
@@ -99,19 +102,16 @@ def save_model(model, tokenizer, output_dir):
         os.makedirs(output_dir)
 
     model_to_save = model.module if hasattr(model, "module") else model
-
     output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
     output_config_file = os.path.join(output_dir, CONFIG_NAME)
-
-    torch.save(
-        remove_module_from_state_dict(model_to_save.state_dict()), output_model_file
-    )
+    torch.save(model_to_save.state_dict(), output_model_file)
     model_to_save.config.to_json_file(output_config_file)
     tokenizer.save_vocabulary(output_dir)
 
 
 def get_logger(output_dir=None):
     if output_dir != None:
+        os.makedirs(output_dir, exist_ok=True)
         logging.basicConfig(
             format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
             datefmt="%m/%d/%Y %H:%M:%S",
@@ -131,7 +131,9 @@ def get_logger(output_dir=None):
             handlers=[logging.StreamHandler(sys.stdout)],
         )
 
-    return logging.getLogger(__name__)
+    logger = logging.getLogger('Blink')
+    logger.setLevel(10)
+    return logger
 
 
 def write_to_file(path, string, mode="w"):
@@ -141,3 +143,7 @@ def write_to_file(path, string, mode="w"):
 
 def get_reranker(parameters):
     return BertReranker(parameters)
+
+
+def get_biencoder(parameters):
+    return BiEncoderRanker(parameters)
