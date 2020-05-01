@@ -55,7 +55,7 @@ python blink/main_dense.py -i --fast
 ```
 Example: 
 ```console
-insert text: Bert and Ernie are two Muppets who appear together in numerous skits on the popular children's television show of the United States, Sesame Street.
+Bert and Ernie are two Muppets who appear together in numerous skits on the popular children's television show of the United States, Sesame Street.
 ```
 Output:
 <img align="middle" src="img/example_result_light.png" height="480">
