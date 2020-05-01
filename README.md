@@ -48,7 +48,8 @@ A quick way to explore the BLINK linking capabilities is through the main_dense 
 ```console
 python blink/main_dense.py -i
 ```
-Fast mode: in the fast mode the model only uses bi-encoder, which is much faster but gives slightly worse result:
+Fast mode: in the fast mode the model only uses bi-encoder, which is much faster (accuracy drops slightly, see details in "Benchmarking BLINK" section). 
+
 ```console
 python blink/main_dense.py -i --fast
 ```
@@ -127,16 +128,16 @@ python blink/run_benchmark.py
 
 The following table summarizes the performance of BLINK for the considered datasets.
 
-| dataset | biencoder accuracy (fast mode) | biencoder recall@100 | crossencoder normalized accuracy | overall unnormalized accuracy | support |
-| ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
-| AIDA-YAGO2 testa | 0.8145 | 0.9826 | 0.8375 | 0.8229 | 4766 |
-| AIDA-YAGO2 testb | 0.7951 | 0.9663 | 0.8282 | 0.8003 | 4446 |
-| ACE 2004 | 0.8443 | 0.9836 | 0.8667 | 0.8525 | 244 |
-| aquaint | 0.8662 | 0.9897 | 0.8648| 0.8559 | 680 |
-| clueweb - WNED-CWEB (CWEB) | 0.6747 | 0.8868 | 0.7677 | 0.681 | 10491 |
-| msnbc | 0.8428 | 0.9676| 0.8794 | 0.8509 | 617 |
-| wikipedia - WNED-WIKI (WIKI) | 0.7976 | 0.9776| 0.8196 | 0.8013 | 6383 |
-| TAC-KBP 2010<sup>1</sup> | 0.8898 | 0.9843 | 0.9172 | 0.9028 | 1019 |
+| dataset | biencoder accuracy (fast mode) | biencoder recall@10 | biencoder recall@30 | biencoder recall@100 | crossencoder normalized accuracy | overall unnormalized accuracy | support |
+| ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |  ------------- |  ------------- |
+| AIDA-YAGO2 testa | 0.8145 | 0.9425 | 0.9639 | 0.9826 | 0.8700 | 0.8212 | 4766 |
+| AIDA-YAGO2 testb | 0.7951 | 0.9238 | 0.9487 | 0.9663 | 0.8669 | 0.8027 | 4446 |
+| ACE 2004 | 0.8443 | 0.9795| 0.9836 | 0.9836 | 0.8870 | 0.8689 | 244 |
+| aquaint | 0.8662 | 0.9618| 0.9765| 0.9897 | 0.8889 | 0.8588 | 680 |
+| clueweb - WNED-CWEB (CWEB) | 0.6747 | 0.8223 | 0.8609 | 0.8868 | 0.826 | 0.6825 | 10491 |
+| msnbc | 0.8428 | 0.9303 | 0.9546 | 0.9676| 0.9031 | 0.8509 | 617 |
+| wikipedia - WNED-WIKI (WIKI) | 0.7976 | 0.9347 | 0.9546 | 0.9776| 0.8609 | 0.8067 | 6383 |
+| TAC-KBP 2010<sup>1</sup> | 0.8898 | 0.9549 | 0.9706 | 0.9843 | 0.9517 | 0.9087 | 1019 |
 
 <sup>1</sup> Licensed dataset available [here](https://catalog.ldc.upenn.edu/LDC2018T16).
 
