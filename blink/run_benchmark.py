@@ -38,7 +38,6 @@ PARAMETERS = {
     "crossencoder_config": "models/crossencoder_wiki_large.json",
     "output_path": "output",
     "fast": False,
-    "top_k": 100,
 }
 args = argparse.Namespace(**PARAMETERS)
 
