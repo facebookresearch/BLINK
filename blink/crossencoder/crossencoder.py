@@ -132,31 +132,6 @@ class CrossEncoderRanker(torch.nn.Module):
             fp16=self.params.get("fp16"),
         )
 
-    def candidate_text_to_idx(self, cands_batch):
-        return [
-            self.text_to_idx(
-                cand, add_start=True, add_end=True, truncate=self.label_truncate
-            )
-            for cand in cands_batch
-        ]
-
-    def text_to_idx(self, text, add_start=False, add_end=False, truncate=None):
-        tokens = self.tokenizer.tokenize(text)
-        if truncate:
-            max_len = truncate - int(add_start) - int(add_end)
-            tokens = tokens[:max_len]
-
-        if add_start:
-            tokens = [self.START_TOKEN] + tokens
-        if add_end:
-            tokens = tokens + [self.END_TOKEN]
-
-        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
-        padding = [0] * (max_seq_length - len(input_ids))
-        input_ids += padding
-        assert len(input_ids) == max_seq_length
-        return input_ids
-
     def score_candidate(self, text_vecs, context_len):
         # Encode contexts first
         num_cand = text_vecs.size(1)

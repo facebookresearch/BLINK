@@ -122,30 +122,7 @@ class BiEncoderRanker(torch.nn.Module):
             self.params["learning_rate"],
             fp16=self.params.get("fp16"),
         )
-
-    def candidate_text_to_idx(self, cands_batch):
-        return [
-            self.text_to_idx(
-                cand, add_start=True, add_end=True, truncate=self.label_truncate
-            )
-            for cand in cands_batch
-        ]
-
-    def text_to_idx(self, text, add_start=False, add_end=False, truncate=None):
-        """
-        Return vector from text.
-        """
-        if add_start:
-            text = self.START_TOKEN + text
-        if add_end:
-            text = text + self.END_TOKEN
-        vec = self.tokenizer.tokenize(text)
-        if truncate:
-            vec = vec[:truncate]
-            # TODO: need to add end token again?
-
-        return vec
-    
+ 
     def encode_context(self, cands):
         token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
             cands, self.NULL_IDX
