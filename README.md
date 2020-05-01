@@ -43,12 +43,12 @@ chmod +x download_models.sh
 ```
 
 ### 3. Use BLINK interactively
-A quick way to explore the BLINK linking capabilities is through the main_dense interactive script. BLINK uses [Flair](https://github.com/flairNLP/flair) for Named Entity Recognition (NER) to obtain entity mentions from input text, then run entity linking. 
+A quick way to explore the BLINK linking capabilities is through the `main_dense` interactive script. BLINK uses [Flair](https://github.com/flairNLP/flair) for Named Entity Recognition (NER) to obtain entity mentions from input text, then run entity linking. 
 
 ```console
 python blink/main_dense.py -i
 ```
-Fast mode: in the fast mode the model only uses bi-encoder, which is much faster (accuracy drops slightly, see details in "Benchmarking BLINK" section). 
+Fast mode: in the fast mode the model only uses the bi-encoder, which is much faster (accuracy drops slightly, see details in "Benchmarking BLINK" section). 
 
 ```console
 python blink/main_dense.py -i --fast
@@ -118,7 +118,7 @@ _, _, _, _, _, predictions, scores, = main_dense.run(args, logger=None, *models,
 We provide scripts to benchmark BLINK against popular Entity Linking datasets.
 Note that our scripts evaluate BLINK in a full Wikipedia setting, that is, the BLINK entity library contains all Wikipedia pages.
 
-To benahcmark BLINK run the following commands:
+To benchmark BLINK run the following commands:
 
 ```console
 ./scripts/get_train_and_benchmark_data.sh
@@ -147,7 +147,7 @@ The BLINK knowledge base (entity library) is based on the 2019/08/01 Wikipedia d
 
 ## BLINK with solr as IR system
 The first version of BLINK uses an [Apache Solr](https://lucene.apache.org/solr) based Information Retrieval system in combination with a BERT based cross-encoder.
-This IR-based version is now deprecated since it's outpeformed by the current BLINK architecture.
+This IR-based version is now deprecated since it's outperformed by the current BLINK architecture.
 If you are interested in the old version, please refer to [this README](blink/candidate_retrieval/README.md).
 
 ## The BLINK Team
