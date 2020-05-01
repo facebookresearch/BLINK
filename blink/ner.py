@@ -8,8 +8,8 @@ from flair.models import SequenceTagger
 from flair.data import Sentence
 
 
-def get_model(parameters):
-    return Flair()
+def get_model(parameters=None):
+    return Flair(parameters)
 
 
 class NER_model:
