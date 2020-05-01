@@ -54,7 +54,7 @@ def _print_colorful_text(input_sentence, samples):
                     int(sample["end_pos"]) : int(samples[idx + 1]["start_pos"])
                 ]
             else:
-                msg += input_sentence[int(sample["end_pos"])]
+                msg += input_sentence[int(sample["end_pos"]) : ]
     else:
         msg = input_sentence
     print("\n" + str(msg) + "\n")
