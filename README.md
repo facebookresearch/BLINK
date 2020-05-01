@@ -92,7 +92,7 @@ args = argparse.Namespace(**config)
 models = main_dense.load_models(args, logger=None)
 
 data_to_link = [ {
-                    "id": element["id"],
+                    "id": 0,
                     "label": "unknown",
                     "label_id": -1,
                     "context_left": "".lower(),
@@ -100,7 +100,7 @@ data_to_link = [ {
                     "context_right": "'s account of the Roman general Julius Caesar's murder by his friend Brutus is a meditation on duty.".lower(),
                 },
                 {
-                    "id": element["id"],
+                    "id": 1,
                     "label": "unknown",
                     "label_id": -1,
                     "context_left": "Shakespeare's account of the Roman general".lower(),
