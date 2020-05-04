@@ -1,5 +1,5 @@
 <img align="middle" src="img/logo.png" height="256" alt="BLINK">
---------------------------------------------------------------------------------
+---
 
 BLINK is an Entity Linking python library that uses Wikipedia as the target knowledge base.
 
