@@ -60,31 +60,43 @@ def modify(context_input, candidate_input, max_seq_length):
     return torch.LongTensor(new_input)
 
 
-def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=True):
+def evaluate(
+    reranker, eval_dataloader, device, logger, context_length, silent=True,
+    id2kb=None, forward_only=False,  # don't compute loss
+):
     reranker.model.eval()
     if silent:
         iter_ = eval_dataloader
     else:
         iter_ = tqdm(eval_dataloader, desc="Evaluation")
 
-    results = {}
-
     eval_accuracy = 0.0
     nb_eval_examples = 0
     nb_eval_steps = 0
 
+    predicted_score = []
+    predicted_pos = []
+    gold_pos = []
     all_logits = []
 
     for step, batch in enumerate(iter_):
         batch = tuple(t.to(device) for t in batch)
         context_input, label_input = batch
+        if id2kb is not None:
+            import pdb
+            pdb.set_trace()
         with torch.no_grad():
-            eval_loss, logits = reranker(context_input, label_input, context_length)
+            eval_loss, logits = reranker(context_input, label_input, context_length, forward_only)
 
         logits = logits.detach().cpu().numpy()
         label_ids = label_input.cpu().numpy()
 
         tmp_eval_accuracy = utils.accuracy(logits, label_ids)
+
+        predicted_score.append(np.max(logits, axis=1))
+        predicted_pos.append(np.argmax(logits, axis=1))
+
+        gold_pos.append(label_ids)
 
         eval_accuracy += tmp_eval_accuracy
         all_logits.extend(logits)
@@ -94,8 +106,15 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
 
     normalized_eval_accuracy = eval_accuracy / nb_eval_examples
     logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
-    results["normalized_accuracy"] = normalized_eval_accuracy
-    results["logits"] = all_logits
+    results = {
+        "num_correct": int(eval_accuracy),
+        "num_total": nb_eval_examples,
+        "normalized_accuracy": normalized_eval_accuracy,
+        "predicted_pos": np.concatenate(predicted_pos, axis=0),  # np.ndarray
+        "predicted_score": np.concatenate(predicted_score, axis=0),  # np.ndarray
+        "gold_pos": np.concatenate(gold_pos, axis=0),  # np.ndarray
+        "logits": all_logits,
+    }
     return results
 
 

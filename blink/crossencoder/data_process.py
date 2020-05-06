@@ -44,7 +44,7 @@ def prepare_crossencoder_mentions(
 
 
 def prepare_crossencoder_candidates(
-    tokenizer, labels, nns, id2title, id2text, max_cand_length=128, topk=100
+    tokenizer, candidate_token_ids, labels, nns, id2title, id2text, max_cand_length=128, topk=100
 ):
 
     START_TOKEN = tokenizer.cls_token
@@ -53,7 +53,7 @@ def prepare_crossencoder_candidates(
     candidate_input_list = []  # samples X topk=10 X 128
     label_input_list = []  # samples
     idx = 0
-    for label, nn in zip(labels, nns):
+    for label, nn in zip(tqdm(labels), nns):
         candidates = []
 
         label_id = -1
@@ -62,13 +62,7 @@ def prepare_crossencoder_candidates(
             if label == candidate_id:
                 label_id = jdx
 
-            rep = data.get_candidate_representation(
-                id2text[candidate_id],
-                tokenizer,
-                max_cand_length,
-                id2title[candidate_id],
-            )
-            tokens_ids = rep["ids"]
+            tokens_ids = candidate_token_ids[candidate_id].tolist()
 
             assert len(tokens_ids) == max_cand_length
             candidates.append(tokens_ids)
@@ -77,8 +71,6 @@ def prepare_crossencoder_candidates(
         candidate_input_list.append(candidates)
 
         idx += 1
-        sys.stdout.write("{}/{} \r".format(idx, len(labels)))
-        sys.stdout.flush()
 
     label_input_list = np.asarray(label_input_list)
     candidate_input_list = np.asarray(candidate_input_list)
@@ -105,24 +97,34 @@ def filter_crossencoder_tensor_input(
         for x, y, z in zip(context_input_list, candidate_input_list, label_input_list)
         if z != -1
     ]
+    filtered_indices_list = [
+        i
+        for i, z in enumerate(label_input_list)
+        if z == -1
+    ]
+
     return (
-        context_input_list_filtered,
-        label_input_list_filtered,
+        context_input_list_filtered,	
+        label_input_list_filtered,	
         candidate_input_list_filtered,
+        filtered_indices_list,
     )
 
 
 def prepare_crossencoder_data(
-    tokenizer, samples, labels, nns, id2title, id2text, keep_all=False
+    tokenizer, candidate_token_ids, samples, labels, nns, id2title, id2text,
+    logger=None, keep_all=False
 ):
 
     # encode mentions
     context_input_list = prepare_crossencoder_mentions(tokenizer, samples)
+    logger.info("Prepared crossencoder mentions")
 
     # encode candidates (output of biencoder)
     label_input_list, candidate_input_list = prepare_crossencoder_candidates(
-        tokenizer, labels, nns, id2title, id2text
+        tokenizer, candidate_token_ids, labels, nns, id2title, id2text
     )
+    logger.info("Prepared crossencoder candidates")
 
     if not keep_all:
         # remove examples where the gold entity is not among the candidates
@@ -130,18 +132,24 @@ def prepare_crossencoder_data(
             context_input_list,
             label_input_list,
             candidate_input_list,
+            filtered_indices_list,
         ) = filter_crossencoder_tensor_input(
             context_input_list, label_input_list, candidate_input_list
         )
+
+        logger.info("Filtered out candidates for crossencoder")
     else:
-        label_input_list = [0] * len(label_input_list)
+        filtered_indices_list = []
 
     context_input = torch.LongTensor(context_input_list)
     label_input = torch.LongTensor(label_input_list)
     candidate_input = torch.LongTensor(candidate_input_list)
+    filtered_indices = torch.LongTensor(filtered_indices_list)
 
     return (
         context_input,
         candidate_input,
         label_input,
+        filtered_indices,
     )
+

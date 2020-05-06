@@ -163,6 +163,21 @@ class BlinkParser(argparse.ArgumentParser):
             required=True,
             help="The output directory where generated output file (model, etc.) is to be dumped.",
         )
+        parser.add_argument(
+            "--mention_aggregation_type",
+            default=None,
+            type=str,
+            help="Type of mention aggregation (None to just use [CLS] token, "
+            "'all_avg' to average across tokens in mention, 'fl_avg' to average across first/last tokens in mention, "
+            "'{all/fl}_linear' for linear layer over mention, '{all/fl}_mlp' to MLP over mention)",
+        )
+        parser.add_argument(
+            "--no_mention_bounds",
+            dest="no_mention_bounds",
+            action="store_true",
+            default=False,
+            help="Don't add tokens around target mention. MUST BE FALSE IF 'mention_aggregation_type' is NONE",
+        )
 
 
     def add_training_args(self, args=None):
@@ -236,6 +251,17 @@ class BlinkParser(argparse.ArgumentParser):
         parser.add_argument(
             "--shuffle", type=bool, default=False, 
             help="Whether to shuffle train data",
+        )
+        # TODO DELETE LATER!!!
+        parser.add_argument(
+            "--start_idx",
+            default=None,
+            type=int,
+        )
+        parser.add_argument(
+            "--end_idx",
+            default=None,
+            type=int,
         )
 
     def add_eval_args(self, args=None):

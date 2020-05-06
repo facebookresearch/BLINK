@@ -58,9 +58,11 @@ def evaluate(
 
     for step, batch in enumerate(iter_):
         batch = tuple(t.to(device) for t in batch)
-        context_input, candidate_input, _, _ = batch
+        context_input = batch[0]	
+        candidate_input = batch[1]
+        mention_idxs = batch[-1]
         with torch.no_grad():
-            eval_loss, logits = reranker(context_input, candidate_input)
+            eval_loss, logits = reranker(context_input, candidate_input, mention_idxs=mention_idxs)
 
         logits = logits.detach().cpu().numpy()
         # Using in-batch negatives, the label ids are diagonal
@@ -149,6 +151,14 @@ def main(params):
     train_samples = utils.read_dataset("train", params["data_path"])
     logger.info("Read %d train samples." % len(train_samples))
 
+    candidate_token_ids = None
+    entity2id = None
+    tokenized_contexts_dir = ""
+    if not params["debug"]:
+        candidate_token_ids = torch.load("/private/home/belindali/BLINK/models/entity_token_ids_128.t7") # TODO DONT HARDCODE THESE PATHS
+        id2line = open("/private/home/belindali/BLINK/models/entity.jsonl").readlines() # TODO DONT HARDCODE THESE PATHS
+        entity2id = {json.loads(id2line[i])['entity']: i for i in range(len(id2line))}
+        tokenized_contexts_dir = os.path.join("models/tokenized_contexts/", params["data_path"].split('/')[-1]) # TODO DONT HARDCODE THESE PATHS
     train_data, train_tensor_data = data.process_mention_data(
         train_samples,
         tokenizer,
@@ -158,7 +168,15 @@ def main(params):
         silent=params["silent"],
         logger=logger,
         debug=params["debug"],
+        add_mention_bounds=(not args.no_mention_bounds),
+        candidate_token_ids=candidate_token_ids,
+        entity2id=entity2id,
+        saved_context_file=os.path.join(tokenized_contexts_dir, "train.json"),
+        get_cached_representation=(not params["debug"]),
+        start_idx=params["start_idx"],
+        end_idx=params["end_idx"],
     )
+    logger.info("Finished reading train samples")
     if params["shuffle"]:
         train_sampler = RandomSampler(train_tensor_data)
     else:
@@ -182,11 +200,19 @@ def main(params):
         silent=params["silent"],
         logger=logger,
         debug=params["debug"],
+        add_mention_bounds=(not args.no_mention_bounds),
+        candidate_token_ids=candidate_token_ids,
+        entity2id=entity2id,
+        saved_context_file=os.path.join(tokenized_contexts_dir, "valid.json"),
+        get_cached_representation=(not params["debug"]),
     )
     valid_sampler = SequentialSampler(valid_tensor_data)
     valid_dataloader = DataLoader(
         valid_tensor_data, sampler=valid_sampler, batch_size=eval_batch_size
     )
+    # save memory
+    candidate_token_ids = None
+    entity2id = None
 
     # evaluate before training
     results = evaluate(
@@ -226,8 +252,10 @@ def main(params):
 
         for step, batch in enumerate(iter_):
             batch = tuple(t.to(device) for t in batch)
-            context_input, candidate_input, _, _ = batch
-            loss, _ = reranker(context_input, candidate_input)
+            context_input = batch[0]	
+            candidate_input = batch[1]
+            mention_idxs = batch[-1]
+            loss, _ = reranker(context_input, candidate_input, mention_idxs=mention_idxs)
 
             # if n_gpu > 1:
             #     loss = loss.mean() # mean() to average on multi-gpu.

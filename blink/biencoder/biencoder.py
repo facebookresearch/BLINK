@@ -39,6 +39,7 @@ class BiEncoderModule(torch.nn.Module):
             params["out_dim"],
             layer_pulled=params["pull_from_layer"],
             add_linear=params["add_linear"],
+            mention_aggregation_type=params["mention_aggregation_type"],
         )
         self.cand_encoder = BertEncoder(
             cand_bert,
@@ -56,12 +57,14 @@ class BiEncoderModule(torch.nn.Module):
         token_idx_cands,
         segment_idx_cands,
         mask_cands,
+        mention_idxs=None,
     ):
         embedding_ctxt = None
         if token_idx_ctxt is not None:
             embedding_ctxt = self.context_encoder(
-                token_idx_ctxt, segment_idx_ctxt, mask_ctxt
+                token_idx_ctxt, segment_idx_ctxt, mask_ctxt, mention_idxs=mention_idxs,
             )
+            # get mention_idx'th token
         embedding_cands = None
         if token_idx_cands is not None:
             embedding_cands = self.cand_encoder(
@@ -151,13 +154,16 @@ class BiEncoderRanker(torch.nn.Module):
         cand_vecs,
         random_negs=True,
         cand_encs=None,  # pre-computed candidate encoding.
+        mention_idxs=None,
     ):
         # Encode contexts first
         token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(
             text_vecs, self.NULL_IDX
         )
         embedding_ctxt, _ = self.model(
-            token_idx_ctxt, segment_idx_ctxt, mask_ctxt, None, None, None
+            token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
+            None, None, None,
+            mention_idxs=mention_idxs,
         )
 
         # Candidate encoding is given, do not need to re-compute
@@ -170,7 +176,8 @@ class BiEncoderRanker(torch.nn.Module):
             cand_vecs, self.NULL_IDX
         )
         _, embedding_cands = self.model(
-            None, None, None, token_idx_cands, segment_idx_cands, mask_cands
+            None, None, None,
+            token_idx_cands, segment_idx_cands, mask_cands
         )
         if random_negs:
             # train on random negatives
@@ -185,9 +192,9 @@ class BiEncoderRanker(torch.nn.Module):
 
     # label_input -- negatives provided
     # If label_input is None, train on in-batch negatives
-    def forward(self, context_input, cand_input, label_input=None):
+    def forward(self, context_input, cand_input, label_input=None, mention_idxs=None):
         flag = label_input is None
-        scores = self.score_candidate(context_input, cand_input, flag)
+        scores = self.score_candidate(context_input, cand_input, flag, mention_idxs=mention_idxs)
         bs = scores.size(0)
         if label_input is None:
             target = torch.LongTensor(torch.arange(bs))
