@@ -1,4 +1,4 @@
-# BLINK with Solr Canditate Retrieval
+# [deprecated] BLINK with Solr Canditate Retrieval
 
 For _candidate retrieval_ the [Solr](https://lucene.apache.org/solr) search engine is used.
 BLINK provides scripts to download, process and link the lasest wikipedia and wikidata dumps, ingest the resulting 5.9M entities into the search engine index, as well as scripts to evaluate the retrieval phase on well known benchmarking data.
