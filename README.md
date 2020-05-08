@@ -61,6 +61,8 @@ Output:
 <img align="middle" src="img/example_result_light.png" height="480">
 
 
+Note: passing ```--show_url``` argument will show the Wikipedia url of each entity. The id number displayed corresponds to the order of entities in the ```entity.jsonl``` file downloaded from ```./download_models.sh``` (starts from 0). The ```entity.jsonl``` file contains information of one entity per row (includes Wikipedia url, title, text, etc.).
+
 ### 4. Use BLINK in your codebase
 
 ```console
