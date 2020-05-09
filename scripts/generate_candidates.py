@@ -11,11 +11,11 @@ import argparse
 
 # TO replicate Ledell's encodings...
 '''
-python blink/generate_candidates.py --path_to_model_config /private/home/belindali/temp/BLINK-Internal/models/biencoder_wiki_large.json \
-    --path_to_model /private/home/belindali/temp/BLINK-Internal/models/biencoder_wiki_large.bin \
-    --entity_dict_path /private/home/belindali/temp/BLINK-Internal/models/entity.jsonl \
-    --compare_saved_embeds /private/home/belindali/temp/BLINK-Internal/models/all_entities_large.t7 \
-    --saved_cand_ids /private/home/belindali/temp/BLINK-Internal/models/entity_token_ids.t7 --test
+python scripts/generate_candidates.py --path_to_model_config /private/home/belindali/BLINK/models/biencoder_wiki_large.json \
+    --path_to_model /private/home/belindali/BLINK/models/biencoder_wiki_large.bin \
+    --entity_dict_path /private/home/belindali/BLINK/models/entity.jsonl \
+    --compare_saved_embeds /private/home/belindali/BLINK/models/all_entities_large.t7 \
+    --saved_cand_ids /private/home/belindali/BLINK/models/entity_token_ids_128.t7 --test
 '''
 
 parser = argparse.ArgumentParser()
@@ -32,7 +32,7 @@ parser.add_argument('--entity_dict_path', type=str, required=True, help='filepat
 # /private/home/belindali/temp/BLINK-Internal/models/entity_token_ids.t7
 parser.add_argument('--saved_cand_ids', type=str, help='filepath to entities pre-parsed into IDs')
 # /checkpoint/belindali/entity_link_models/saved/candidate_encodes/webqsp_data_bienc_finetune/my_train_try{n}
-parser.add_argument('--encoding_save_file_dir', type=str, help='directory of file to save generated encodings')
+parser.add_argument('--encoding_save_file_dir', type=str, help='directory of file to save generated encodings', default=None)
 parser.add_argument('--test', action='store_true', default=False, help='whether to just test encoding subsample of entities')
 
 # /private/home/belindali/temp/BLINK-Internal/models/tac_candidate_encode_large.t7
@@ -85,8 +85,8 @@ saved_cand_ids = getattr(args, 'saved_cand_ids', None)
 #saved_cand_ids = "/private/home/belindali/BLINK-Internal/models/wdt_entity_ids_{}.t7".format(
 #        biencoder_params["max_cand_length"])  # WEBQSP DATA
 encoding_save_file_dir = args.encoding_save_file_dir
-if not os.path.exists(encoding_save_file_dir):
-    os.makedirs(encoding_save_file_dir)
+if encoding_save_file_dir is not None and not os.path.exists(encoding_save_file_dir):
+    os.makedirs(encoding_save_file_dir, exist_ok=True)
 #encoding_save_file_pref = "/private/home/belindali/BLINK-Internal/models/entities_seqlen_{}_my_train.t7".format(
 #        biencoder_params["max_cand_length"])
 #encoding_save_file_pref = "/private/home/belindali/BLINK-Internal/models/entities_seqlen_{}_my_train.t7".format(
@@ -130,17 +130,19 @@ print("Saving in: {}".format(save_file))
 #     print("Save file already exists!: {}".format(save_file))
 #     sys.exit()
 
-f = open(save_file, "w").close()  # mark as existing
 if save_file is not None:
-    candidate_encoding = encode_candidate(
-        biencoder,
-        candidate_pool[args.chunk_start:args.chunk_end],
-        biencoder_params["encode_batch_size"],
-        biencoder_params["silent"],
-        logger,
-    )
-    if getattr(args, 'encoding_save_file_dir', None) is not None:
-        torch.save(candidate_encoding, save_file)
+    f = open(save_file, "w").close()  # mark as existing
+
+candidate_encoding = encode_candidate(
+    biencoder,
+    candidate_pool[args.chunk_start:args.chunk_end],
+    biencoder_params["encode_batch_size"],
+    biencoder_params["silent"],
+    logger,
+)
+
+if save_file is not None:
+    torch.save(candidate_encoding, save_file)
 
 print(candidate_encoding[0,:10])
 if baseline_candidate_encoding is not None:

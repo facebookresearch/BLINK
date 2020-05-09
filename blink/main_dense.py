@@ -264,6 +264,7 @@ def get_mention_bound_candidates(
             if "all_gold_entities" in new_record:
                 new_record_list[len(new_record_list)-1]["all_gold_entities"] = new_record["all_gold_entities"]
                 new_record_list[len(new_record_list)-1]["all_gold_entities_ids"] = new_record["all_gold_entities_ids"]
+                new_record_list[len(new_record_list)-1]["all_gold_entities_pos"] = record['entities_pos']
             if "main_entity_pos" in record:
                 new_record_list[len(new_record_list)-1]["gold_context_left"] = record[
                     'utterance'][:record['main_entity_pos'][0]].lower()
@@ -284,6 +285,7 @@ def get_mention_bound_candidates(
             if "all_gold_entities" in new_record:
                 new_record_list[len(new_record_list)-1]["all_gold_entities"] = new_record["all_gold_entities"]
                 new_record_list[len(new_record_list)-1]["all_gold_entities_ids"] = new_record["all_gold_entities_ids"]
+                new_record_list[len(new_record_list)-1]["all_gold_entities_pos"] = record['entities_pos']
             if "main_entity_pos" in record:
                 new_record_list[len(new_record_list)-1]["gold_context_left"] = record[
                     'utterance'][:record['main_entity_pos'][0]].lower()
@@ -549,7 +551,13 @@ def _run_crossencoder(
 def _combine_same_inputs_diff_mention_bounds(samples, labels, nns, dists, sample_to_all_context_inputs, filtered_indices=None, debug=False):
     # TODO save ALL samples
     if not debug:
-        assert len(nns) == sample_to_all_context_inputs[-1][-1] + 1
+        try:
+            assert len(nns) == sample_to_all_context_inputs[-1][-1] + 1
+        except:
+            # TODO DEBUG
+            sample_to_all_context_inputs[-1] = sample_to_all_context_inputs[-1][:-1]
+            import pdb
+            pdb.set_trace()
     samples_merged = []
     nns_merged = []
     dists_merged = []
@@ -626,6 +634,8 @@ def _combine_same_inputs_diff_mention_bounds(samples, labels, nns, dists, sample
             samples_merged[len(samples_merged)-1]["gold_context_right"] = samples[context_input_idxs[0]]["gold_context_right"]
         if "all_gold_entities" in samples[context_input_idxs[0]]:
             samples_merged[len(samples_merged)-1]["all_gold_entities"] = samples[context_input_idxs[0]]["all_gold_entities"]
+        if "all_gold_entities_pos" in samples[context_input_idxs[0]]:
+            samples_merged[len(samples_merged)-1]["all_gold_entities_pos"] = samples[context_input_idxs[0]]["all_gold_entities_pos"]
         dists_idx += len(context_input_idxs)
     return samples_merged, labels_merged, nns_merged, dists_merged, entity_mention_bounds_idx, filtered_cluster_indices
 
@@ -885,7 +895,6 @@ def run(
                     for all_id in entity_list:
                         kbid = id2kb.get(all_id, "")
                         pred_kbids_sorted.append(kbid)
-                    e_mention_bounds = int(entity_mention_bounds_idx[i][0])
                     label = labels_merged[i]
                     sample = samples_merged[i]
                     distances = dists_merged[i]
@@ -902,6 +911,7 @@ def run(
                     # f.write(e_kbid + "\t" + str(sample['label']) + "\t" + str(input) + "\n")
 
                     if args.eval_main_entity:
+                        e_mention_bounds = int(entity_mention_bounds_idx[i][0])
                         if e_kbid != "":
                             gold_triple = [(
                                 sample['label'],
@@ -919,11 +929,20 @@ def run(
                     else:
                         if "all_gold_entities" in sample:
                             # get *all* entities, removing duplicates
-                            all_pred_entities = set(pred_kbids_sorted[:1])
-                            for entity in all_pred_entities:
-                                if entity in sample["all_gold_entities"]:
-                                    num_correct += 1
-                                num_predicted += 1
+                            all_pred_entities = pred_kbids_sorted[:1]
+                            e_mention_bounds = entity_mention_bounds_idx[i][:1].tolist()
+                            pred_triples = [(
+                                all_pred_entities[i],
+                                len(sample['context_left'][e_mention_bounds[i]]), 
+                                len(sample['context_left'][e_mention_bounds[i]]) + len(sample['mention'][e_mention_bounds[i]]),
+                            ) for i in range(len(all_pred_entities))]
+                            gold_triples = [(
+                                sample['all_gold_entities'][i],
+                                sample['all_gold_entities_pos'][i][0], 
+                                sample['all_gold_entities_pos'][i][1],
+                            ) for i in range(len(sample['all_gold_entities']))]
+                            num_correct += entity_linking_tp_with_overlap(gold_triples, pred_triples)
+                            num_predicted += len(all_pred_entities)
                             num_gold += len(sample["all_gold_entities"])
                         
                     # if sample['label'] is not None:
@@ -937,7 +956,7 @@ def run(
                         # "text": e_text,
                         "all_pred_KBids": [id2kb.get(e_id, "") for e_id in entity_list],
                         "input_mention_bounds": input,
-                        "top_mention_bound_idx": e_mention_bounds,
+                        "gold_mention_bounds": e_mention_bounds,
                         "gold_KBid": sample['label'],
                         "scores": distances.tolist(),
                     }

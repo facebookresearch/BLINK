@@ -44,7 +44,7 @@
 
 # sbatch examples/train_biencoder.sh webqsp none both 128
 # sbatch examples/train_biencoder.sh webqsp none predict 512
-data=$1  # webqsp/zeshel/pretrain_wiki
+data=$1  # webqsp/zeshel/pretrain
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none
 objective=$3  # train/predict/both (default)
 batch_size=$4  # 64 (for training large model)
@@ -87,7 +87,7 @@ fi
 if [ "${objective}" = "both" ] || [ "${objective}" = "train" ]
 then
   echo "Running ${mention_agg_type} biencoder training on ${data} dataset."
-  if [ "${data}" = "pretrain_wiki" ]
+  if [ "${data}" = "pretrain" ]
   then
     python blink/biencoder/train_biencoder.py \
       --output_path data/experiments/pretrain/biencoder_${mention_agg_type} \
@@ -97,7 +97,8 @@ then
       --train_batch_size ${batch_size} \
       --eval_batch_size ${batch_size} \
       --bert_model bert-large-uncased \
-      --data_parallel ${all_mention_args}
+      --data_parallel ${all_mention_args} \
+      --eval_interval 100
       #--debug \
       # --start_idx ${chunk_start} --end_idx ${chunk_end}   # TODO DELETE THIS LATER!!!!!
   else
@@ -134,28 +135,44 @@ then
   then
     chunk_end="1000000"
   fi
+  
+  directory=${data}
 
-  if [ ! -f "/private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder/training_params.txt" ]
+  model_config=data/experiments/${directory}/biencoder_${mention_agg_type}/training_params.txt
+  save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder
+  if [ "${data}" = "pretrain" ]
   then
-    echo "copying training params to /private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder/training_params.txt"
-    cp data/experiments/${data}/biencoder_${mention_agg_type}/training_params.txt /private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder/training_params.txt
+    model_path=data/experiments/${directory}/biencoder_${mention_agg_type}/epoch_0_step_22000/pytorch_model.bin  # TODO REVISE THIS LATER
+    save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder_22000
+  elif [ "${data}" = "zero_shot" ]
+  then
+    model_path=models/biencoder_wiki_large.bin
+    model_config=models/biencoder_wiki_large.json
+  else
+    model_path=data/experiments/${directory}/biencoder_${mention_agg_type}/pytorch_model.bin
   fi
 
-  if [ ! -f "/private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder/pytorch_model.bin" ]
+  if [ ! -f "${save_dir}/training_params.txt" ]
   then
-    echo "copying saved model bin to /private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder/pytorch_model.bin"
-    cp data/experiments/${data}/biencoder_${mention_agg_type}/pytorch_model.bin /private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder/pytorch_model.bin
+    echo "copying training params to ${save_dir}/training_params.txt"
+    cp ${model_config} ${save_dir}/training_params.txt
+  fi
+
+  if [ ! -f "${save_dir}/pytorch_model.bin" ]
+  then
+    echo "copying saved model bin to ${save_dir}/pytorch_model.bin"
+    cp ${model_path} ${save_dir}/pytorch_model.bin
   fi
 
   echo "Getting ${mention_agg_type}_${data} biencoder candidates on wikipedia entities."
   python scripts/generate_candidates.py \
-      --path_to_model_config data/experiments/${data}/biencoder_${mention_agg_type}/training_params.txt \
-      --path_to_model data/experiments/${data}/biencoder_${mention_agg_type}/pytorch_model.bin \
+      --path_to_model_config ${model_config} \
+      --path_to_model ${model_path} \
       --entity_dict_path "/private/home/belindali/BLINK/models/entity.jsonl" \
-      --encoding_save_file_dir "/private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder" \
+      --encoding_save_file_dir "${save_dir}" \
       --saved_cand_ids "/private/home/belindali/BLINK/models/entity_token_ids_128.t7" \
       --batch_size 512 \
       --chunk_start ${chunk_start} --chunk_end ${chunk_end}
   python scripts/merge_candidates.py \
-      --path_to_saved_chunks /private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder
+      --path_to_saved_chunks ${save_dir}
 fi

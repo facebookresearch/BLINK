@@ -39,7 +39,7 @@ class BiEncoderModule(torch.nn.Module):
             params["out_dim"],
             layer_pulled=params["pull_from_layer"],
             add_linear=params["add_linear"],
-            mention_aggregation_type=params["mention_aggregation_type"],
+            mention_aggregation_type=params.get("mention_aggregation_type", None),
         )
         self.cand_encoder = BertEncoder(
             cand_bert,

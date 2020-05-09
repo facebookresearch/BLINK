@@ -143,6 +143,8 @@ def process_mention_data(
         samples = samples[:200]
 
     print("Start_idx: {}, End_idx: {}".format(start_idx, end_idx))
+    if end_idx == -1:
+        end_idx = len(samples)
     if silent:
         iter_ = samples[start_idx:end_idx]
     else:
@@ -174,7 +176,7 @@ def process_mention_data(
                 )
             mention_idxs = [
                 len(saved_contexts[idx]['context_left_ids']),
-                len(saved_contexts[idx]['context_left_ids']) + len(saved_contexts[idx]['mention_tokens']),
+                len(saved_contexts[idx]['context_left_ids']) + len(saved_contexts[idx]['mention_tokens']) - 1,  # make bounds inclusive
             ]
             # TODO VERIFY THE SAVED CONTEXTS
             context_tokens = {
@@ -224,6 +226,7 @@ def process_mention_data(
                     'context_right': sample['context_right'],
                 }
                 all_saved_encodings.append(saved_encodings)
+            context_tokens["mention_idxs"][1] -= 1  # make boundsinclusive
 
         label = sample[label_key]
         title = sample.get(title_key, None)

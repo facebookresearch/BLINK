@@ -69,7 +69,7 @@ def get_topk_predictions(
                 src = srcs[i].item()
                 # not the same domain, need to re-do
                 new_scores = reranker.score_candidate(
-                    context_input[[i]], 
+                    context_input[[i]],
                     None,
                     cand_encs=cand_encode_list[src].to(device)
                 )
