@@ -158,8 +158,8 @@ def main(params):
         candidate_token_ids = torch.load("/private/home/belindali/BLINK/models/entity_token_ids_128.t7") # TODO DONT HARDCODE THESE PATHS
         id2line = open("/private/home/belindali/BLINK/models/entity.jsonl").readlines() # TODO DONT HARDCODE THESE PATHS
         entity2id = {json.loads(id2line[i])['entity']: i for i in range(len(id2line))}
-        tokenized_contexts_dir = os.path.join("models/tokenized_contexts/", params["data_path"].split('/')[-1]) # TODO DONT HARDCODE THESE PATHS
-    train_data, train_tensor_data = data.process_mention_data(
+        tokenized_contexts_dir = os.path.join("/private/home/belindali/BLINK/models/tokenized_contexts/", params["data_path"].split('/')[-1]) # TODO DONT HARDCODE THESE PATHS
+    train_data, train_tensor_data_tuple = data.process_mention_data(
         train_samples,
         tokenizer,
         params["max_context_length"],
@@ -177,22 +177,15 @@ def main(params):
         end_idx=params["end_idx"],
     )
     logger.info("Finished reading train samples")
-    if params["shuffle"]:
-        train_sampler = RandomSampler(train_tensor_data)
-    else:
-        train_sampler = SequentialSampler(train_tensor_data)
-
-    train_dataloader = DataLoader(
-        train_tensor_data, sampler=train_sampler, batch_size=train_batch_size
-    )
 
     # Load eval data
     # TODO: reduce duplicated code here
     valid_samples = utils.read_dataset("valid", params["data_path"])
-    logger.info("Read %d valid samples." % len(valid_samples))
+    valid_subset = 2048
+    logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
 
     valid_data, valid_tensor_data = data.process_mention_data(
-        valid_samples,
+        valid_samples[:valid_subset],  # use subset of valid data TODO Make subset random????
         tokenizer,
         params["max_context_length"],
         params["max_cand_length"],
@@ -206,6 +199,7 @@ def main(params):
         saved_context_file=os.path.join(tokenized_contexts_dir, "valid.json"),
         get_cached_representation=(not params["debug"]),
     )
+    valid_tensor_data = TensorDataset(*valid_tensor_data)
     valid_sampler = SequentialSampler(valid_tensor_data)
     valid_dataloader = DataLoader(
         valid_tensor_data, sampler=valid_sampler, batch_size=eval_batch_size
@@ -232,18 +226,37 @@ def main(params):
         "device: {} n_gpu: {}, distributed training: {}".format(device, n_gpu, False)
     )
 
+    num_train_epochs = params["num_train_epochs"]
+    num_samples_per_batch = len(train_samples) // num_train_epochs
+
     optimizer = get_optimizer(model, params)
-    scheduler = get_scheduler(params, optimizer, len(train_tensor_data), logger)
+    scheduler = get_scheduler(params, optimizer, min(len(train_tensor_data), num_samples_per_batch), logger)
 
     model.train()
 
     best_epoch_idx = -1
     best_score = -1
-
-    num_train_epochs = params["num_train_epochs"]
+    logger.info("Num samples per batch : %d" % num_samples_per_batch)
     for epoch_idx in trange(int(num_train_epochs), desc="Epoch"):
         tr_loss = 0
         results = None
+
+        start_idx = epoch_idx * num_samples_per_batch
+        end_idx = (epoch_idx + 1) * num_samples_per_batch
+
+        import pdb
+        pdb.set_trace()
+        batch_train_tensor_data = TensorDataset(
+            *[element[start_idx:end_idx] for element in train_tensor_data_tuple]
+        )
+        if params["shuffle"]:
+            train_sampler = RandomSampler(batch_train_tensor_data)
+        else:
+            train_sampler = SequentialSampler(batch_train_tensor_data)
+
+        train_dataloader = DataLoader(
+            batch_train_tensor_data, sampler=train_sampler, batch_size=train_batch_size
+        )
 
         if params["silent"]:
             iter_ = train_dataloader
@@ -292,6 +305,13 @@ def main(params):
                 )
                 model.train()
                 logger.info("\n")
+
+                # if (step + 1) % (params["eval_interval"] * grad_acc_steps * 10) == 0:
+                #     logger.info("***** Saving fine - tuned model *****")
+                #     epoch_output_folder_path = os.path.join(
+                #         model_output_path, "epoch_{}_step_{}".format(epoch_idx, step + 1)
+                #     )
+                #     utils.save_model(model, tokenizer, epoch_output_folder_path)
 
         logger.info("***** Saving fine - tuned model *****")
         epoch_output_folder_path = os.path.join(

@@ -323,9 +323,11 @@ def process_mention_data(
 
     if use_world:
         data["src"] = src_vecs
-        tensor_data = TensorDataset(context_vecs, cand_vecs, src_vecs, label_idx, mention_idx_vecs)
+        tensor_data_tuple = (context_vecs, cand_vecs, src_vecs, label_idx, mention_idx_vecs)
+        # tensor_data = TensorDataset(context_vecs, cand_vecs, src_vecs, label_idx, mention_idx_vecs)
     else:
-        tensor_data = TensorDataset(context_vecs, cand_vecs, label_idx, mention_idx_vecs)
+        tensor_data_tuple = (context_vecs, cand_vecs, label_idx, mention_idx_vecs)
+        # tensor_data = TensorDataset(context_vecs, cand_vecs, label_idx, mention_idx_vecs)
     if logger:
         logger.info("Created tensor dataset")
-    return data, tensor_data
+    return data, tensor_data_tuple
