@@ -491,7 +491,7 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
         silent=False,
         logger=None,
         debug=biencoder_params["debug"],
-        add_mention_bounds=(not args.no_mention_bounds_biencoder),
+        add_mention_bounds=(not biencoder_params["no_mention_bounds"]),
         get_cached_representation=False,  # TODO???
     )
     tensor_data = TensorDataset(*tensor_data_tuple)
@@ -666,7 +666,7 @@ def load_models(args, logger):
     biencoder_params["path_to_model"] = args.biencoder_model
     biencoder_params["eval_batch_size"] = args.eval_batch_size
     biencoder_params["no_cuda"] = not args.use_cuda
-    biencoder_params["mention_aggregation_type"] = args.mention_aggregation_type
+    # biencoder_params["mention_aggregation_type"] = args.mention_aggregation_type
     biencoder = load_biencoder(biencoder_params)
     if not args.use_cuda and type(biencoder.model).__name__ == 'DataParallel':
         biencoder.model = biencoder.model.module
