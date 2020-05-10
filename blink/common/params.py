@@ -178,6 +178,12 @@ class BlinkParser(argparse.ArgumentParser):
             default=False,
             help="Don't add tokens around target mention. MUST BE FALSE IF 'mention_aggregation_type' is NONE",
         )
+        parser.add_argument(
+            "--last_epoch",
+            default=0,
+            type=int,
+            help="Epoch to restore from when pretraining",
+        )
 
 
     def add_training_args(self, args=None):

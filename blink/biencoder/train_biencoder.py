@@ -160,10 +160,10 @@ def main(params):
         entity2id = {json.loads(id2line[i])['entity']: i for i in range(len(id2line))}
         tokenized_contexts_dir = os.path.join("/private/home/belindali/BLINK/models/tokenized_contexts/", params["data_path"].split('/')[-1]) # TODO DONT HARDCODE THESE PATHS
     train_data, train_tensor_data_tuple = data.process_mention_data(
-        train_samples,
-        tokenizer,
-        params["max_context_length"],
-        params["max_cand_length"],
+        samples=train_samples,
+        tokenizer=tokenizer,
+        max_context_length=params["max_context_length"],
+        max_cand_length=params["max_cand_length"],
         context_key=params["context_key"],
         silent=params["silent"],
         logger=logger,
@@ -173,8 +173,6 @@ def main(params):
         entity2id=entity2id,
         saved_context_file=os.path.join(tokenized_contexts_dir, "train.json"),
         get_cached_representation=(not params["debug"]),
-        start_idx=params["start_idx"],
-        end_idx=params["end_idx"],
     )
     logger.info("Finished reading train samples")
 
@@ -185,10 +183,10 @@ def main(params):
     logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
 
     valid_data, valid_tensor_data = data.process_mention_data(
-        valid_samples[:valid_subset],  # use subset of valid data TODO Make subset random????
-        tokenizer,
-        params["max_context_length"],
-        params["max_cand_length"],
+        samples=valid_samples[:valid_subset],  # use subset of valid data TODO Make subset random????
+        tokenizer=tokenizer,
+        max_context_length=params["max_context_length"],
+        max_cand_length=params["max_cand_length"],
         context_key=params["context_key"],
         silent=params["silent"],
         logger=logger,
@@ -230,22 +228,20 @@ def main(params):
     num_samples_per_batch = len(train_samples) // num_train_epochs
 
     optimizer = get_optimizer(model, params)
-    scheduler = get_scheduler(params, optimizer, min(len(train_tensor_data), num_samples_per_batch), logger)
+    scheduler = get_scheduler(params, optimizer, min(len(train_tensor_data_tuple[0]), num_samples_per_batch), logger)
 
     model.train()
 
     best_epoch_idx = -1
     best_score = -1
     logger.info("Num samples per batch : %d" % num_samples_per_batch)
-    for epoch_idx in trange(int(num_train_epochs), desc="Epoch"):
+    for epoch_idx in trange(params["last_epoch"], int(num_train_epochs), desc="Epoch"):
         tr_loss = 0
         results = None
 
         start_idx = epoch_idx * num_samples_per_batch
         end_idx = (epoch_idx + 1) * num_samples_per_batch
 
-        import pdb
-        pdb.set_trace()
         batch_train_tensor_data = TensorDataset(
             *[element[start_idx:end_idx] for element in train_tensor_data_tuple]
         )

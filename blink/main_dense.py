@@ -432,11 +432,12 @@ def __load_test(
 
         else:
             lines = fin.readlines()
-            for line in tqdm(lines):
+            for i, line in enumerate(tqdm(lines)):
                 record = json.loads(line)
                 record["label"] = record["label_id"]
                 record["q_id"] = record["query_id"]
                 if record["label"] in kb2id:
+                    sample_to_all_context_inputs.append([len(test_samples)])
                     record["label_id"] = kb2id[record["label"]]
                     # LOWERCASE EVERYTHING !
                     record["context_left"] = record["context_left"].lower()
@@ -482,17 +483,18 @@ def _get_test_samples(
 
 
 def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
-    tokens_data, tensor_data = process_mention_data(
-        samples,
-        tokenizer,
-        biencoder_params["max_context_length"],
-        biencoder_params["max_cand_length"],
+    tokens_data, tensor_data_tuple = process_mention_data(
+        samples=samples,
+        tokenizer=tokenizer,
+        max_context_length=biencoder_params["max_context_length"],
+        max_cand_length=biencoder_params["max_cand_length"],
         silent=False,
         logger=None,
         debug=biencoder_params["debug"],
         add_mention_bounds=(not args.no_mention_bounds_biencoder),
         get_cached_representation=False,  # TODO???
     )
+    tensor_data = TensorDataset(*tensor_data_tuple)
     sampler = SequentialSampler(tensor_data)
     dataloader = DataLoader(
         tensor_data, sampler=sampler, batch_size=biencoder_params["eval_batch_size"]
@@ -555,7 +557,6 @@ def _combine_same_inputs_diff_mention_bounds(samples, labels, nns, dists, sample
             assert len(nns) == sample_to_all_context_inputs[-1][-1] + 1
         except:
             # TODO DEBUG
-            sample_to_all_context_inputs[-1] = sample_to_all_context_inputs[-1][:-1]
             import pdb
             pdb.set_trace()
     samples_merged = []
@@ -815,14 +816,14 @@ def run(
             logger.info("test dataset mode")
 
             # Load test mentions
-            samples, _, _, _, _ = _get_test_samples(
+            samples, _, _, _, sample_to_all_context_inputs = _get_test_samples(
                 args.test_mentions, args.test_entities, title2id, kb2id, id2kb, logger
             )
             stopping_condition = True
 
         # prepare the data for biencoder
         # run biencoder if predictions not saved
-        if not args.qa_data or not os.path.exists(os.path.join(args.save_preds_dir, 'biencoder_labels.npy')):
+        if not os.path.exists(os.path.join(args.save_preds_dir, 'biencoder_labels.npy')):
             logger.info("Preparing data for biencoder....")
             dataloader = _process_biencoder_dataloader(
                 samples, biencoder.tokenizer, biencoder_params
@@ -1001,6 +1002,53 @@ def run(
             if args.fast:
                 # use only biencoder
                 return biencoder_accuracy, recall_at, 0, 0, len(samples)
+        else:
+            keep_all = (
+                args.interactive
+                or samples[0]["label"] == "unknown"
+                or samples[0]["label_id"] < 0
+            )
+            biencoder_accuracy = -1
+            recall_at = -1
+            if not keep_all:
+                # get recall values
+                top_k = 100
+                x = []
+                y = []
+                for i in range(1, top_k):
+                    temp_y = 0.0
+                    for label, top in zip(labels, nns):
+                        if label in top[:i]:
+                            temp_y += 1
+                    if len(labels) > 0:
+                        temp_y /= len(labels)
+                    x.append(i)
+                    y.append(temp_y)
+                # plt.plot(x, y)
+                biencoder_accuracy = y[0]
+                recall_at = y[-1]
+                print("biencoder accuracy: %.4f" % biencoder_accuracy)
+                print("biencoder recall@%d: %.4f" % (top_k, y[-1]))
+
+            if args.fast:
+
+                predictions = []
+                for entity_list in nns:
+                    sample_prediction = []
+                    for e_id in entity_list:
+                        e_title = id2title[e_id]
+                        sample_prediction.append(e_title)
+                    predictions.append(sample_prediction)
+
+                # use only biencoder
+                return (
+                    biencoder_accuracy,
+                    recall_at,
+                    -1,
+                    -1,
+                    len(samples),
+                    predictions,
+                )
 
         # prepare crossencoder data
         logger.info("preparing crossencoder data")

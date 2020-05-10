@@ -47,9 +47,10 @@
 data=$1  # webqsp/zeshel/pretrain
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none
 objective=$3  # train/predict/both (default)
-batch_size=$4  # 64 (for training large model)
+batch_size=$4  # 128 (for training large model)
 chunk_start=$5
 chunk_end=$6
+epoch=$7
 
 export PYTHONPATH=.
 
@@ -89,8 +90,12 @@ then
   echo "Running ${mention_agg_type} biencoder training on ${data} dataset."
   if [ "${data}" = "pretrain" ]
   then
+    if [ "${epoch}" = "" ]
+    then
+      epoch=0
+    fi
     python blink/biencoder/train_biencoder.py \
-      --output_path data/experiments/pretrain/biencoder_${mention_agg_type} \
+      --output_path data/experiments/pretrain/biencoder_${mention_agg_type}_2 \
       --data_path /private/home/ledell/data/wiki_ent2 \
       --num_train_epochs 100 \
       --learning_rate 0.00001 \
@@ -98,7 +103,8 @@ then
       --eval_batch_size ${batch_size} \
       --bert_model bert-large-uncased \
       --data_parallel ${all_mention_args} \
-      --eval_interval 100
+      --eval_interval 1000 \
+      --last_epoch ${epoch}
       #--debug \
       # --start_idx ${chunk_start} --end_idx ${chunk_end}   # TODO DELETE THIS LATER!!!!!
   else
@@ -142,8 +148,8 @@ then
   save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder
   if [ "${data}" = "pretrain" ]
   then
-    model_path=data/experiments/${directory}/biencoder_${mention_agg_type}/epoch_0_step_22000/pytorch_model.bin  # TODO REVISE THIS LATER
-    save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder_22000
+    model_path=data/experiments/${directory}/biencoder_${mention_agg_type}/epoch_${epoch}/pytorch_model.bin  # TODO REVISE THIS LATER
+    save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder_${epoch}
   elif [ "${data}" = "zero_shot" ]
   then
     model_path=models/biencoder_wiki_large.bin
