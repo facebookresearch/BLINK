@@ -101,8 +101,7 @@ def _load_candidates(entity_catalogue, entity_encoding):
     wikipedia_id2local_id = {}
     local_idx = 0
     with open(entity_catalogue, "r") as fin:
-        lines = fin.readlines()
-        for line in lines:
+        for line in fin:
             entity = json.loads(line)
 
             if "idx" in entity:
