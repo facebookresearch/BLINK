@@ -94,18 +94,24 @@ then
     then
       epoch=0
     fi
+    output_path=data/experiments/pretrain/biencoder_${mention_agg_type}_2
+    if [ "${epoch}" != "0" ]
+    then
+      model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin"
+    fi
     python blink/biencoder/train_biencoder.py \
-      --output_path data/experiments/pretrain/biencoder_${mention_agg_type}_2 \
+      --output_path ${output_path} \
       --data_path /private/home/ledell/data/wiki_ent2 \
       --num_train_epochs 100 \
       --learning_rate 0.00001 \
       --train_batch_size ${batch_size} \
       --eval_batch_size ${batch_size} \
       --bert_model bert-large-uncased \
-      --data_parallel ${all_mention_args} \
+      ${all_mention_args} \
       --eval_interval 1000 \
-      --last_epoch ${epoch}
-      #--debug \
+      --last_epoch ${epoch} ${model_path_arg} \
+      --data_parallel 
+      # --debug
       # --start_idx ${chunk_start} --end_idx ${chunk_end}   # TODO DELETE THIS LATER!!!!!
   else
     python blink/biencoder/train_biencoder.py \
@@ -145,11 +151,11 @@ then
   directory=${data}
 
   model_config=data/experiments/${directory}/biencoder_${mention_agg_type}/training_params.txt
-  save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder
+  save_dir=models/entity_encodings/${directory}_${mention_agg_type}_biencoder
   if [ "${data}" = "pretrain" ]
   then
     model_path=data/experiments/${directory}/biencoder_${mention_agg_type}/epoch_${epoch}/pytorch_model.bin  # TODO REVISE THIS LATER
-    save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder_${epoch}
+    save_dir=models/entity_encodings/${directory}_${mention_agg_type}_biencoder_${epoch}
   elif [ "${data}" = "zero_shot" ]
   then
     model_path=models/biencoder_wiki_large.bin
@@ -171,6 +177,7 @@ then
   fi
 
   echo "Getting ${mention_agg_type}_${data} biencoder candidates on wikipedia entities."
+  echo "config: ${model_config}, path: ${model_path}"
   python scripts/generate_candidates.py \
       --path_to_model_config ${model_config} \
       --path_to_model ${model_path} \

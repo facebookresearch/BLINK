@@ -235,7 +235,7 @@ def main(params):
     best_epoch_idx = -1
     best_score = -1
     logger.info("Num samples per batch : %d" % num_samples_per_batch)
-    for epoch_idx in trange(params["last_epoch"], int(num_train_epochs), desc="Epoch"):
+    for epoch_idx in trange(params["last_epoch"] + 1, int(num_train_epochs), desc="Epoch"):
         tr_loss = 0
         results = None
 
