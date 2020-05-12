@@ -113,6 +113,93 @@ def get_candidate_representation(
     }
 
 
+def get_context_representation_from_saved(
+    sample, max_context_length, ent_start_token, ent_end_token,
+    ent_start_id, ent_end_id, cls_token_id, sep_token_id,
+    add_mention_bounds, saved_contexts, idx,
+):
+    # Sanity checks to ensure we have the correct corresponding saved entry
+    assert saved_contexts[idx]['mention'] == sample['mention']
+    assert saved_contexts[idx]['context_left'] == sample['context_left']
+    assert saved_contexts[idx]['context_right'] == sample['context_right']
+
+    # STRIP CLS/SEP tokens and PAD on context_right_ids
+    if saved_contexts[idx]['context_left_tokens'][0] == "[CLS]":
+        saved_contexts[idx]['context_left_tokens'] = saved_contexts[idx]['context_left_tokens'][1:]
+        saved_contexts[idx]['context_left_ids'] = saved_contexts[idx]['context_left_ids'][1:]
+    if saved_contexts[idx]['context_right_tokens'][-1] == "[SEP]":
+        saved_contexts[idx]['context_right_tokens'] = saved_contexts[idx]['context_right_tokens'][:-1]
+        saved_contexts[idx]['context_right_ids'] = saved_contexts[idx]['context_right_ids'][:len(saved_contexts[idx]['context_right_tokens'])]
+
+    if add_mention_bounds:
+        saved_contexts[idx]['mention_tokens'] = (
+            [ent_start_token] +
+            saved_contexts[idx]['mention_tokens'] +
+            [ent_end_token]
+        )
+        saved_contexts[idx]['mention_ids'] = (
+            [ent_start_id] +
+            saved_contexts[idx]['mention_ids'] +
+            [ent_end_id]
+        )
+
+    # MENTION BOUNDARY CUTTING HERE IN ACCORDANCE TO MAX_CONTEXT_LENGTH
+    left_quota = (max_context_length - len(saved_contexts[idx]['mention_tokens'])) // 2 - 1
+    right_quota = max_context_length - len(saved_contexts[idx]['mention_tokens']) - left_quota - 2
+    left_add = len(saved_contexts[idx]['context_left_tokens'])
+    right_add = len(saved_contexts[idx]['context_right_tokens'])
+    if left_add <= left_quota:
+        if right_add > right_quota:
+            right_quota += left_quota - left_add
+    else:
+        if right_add <= right_quota:
+            left_quota += right_quota - right_add
+
+    if left_quota <= 0:	
+        context_left = []
+        context_left_ids = []
+    else:
+        context_left = saved_contexts[idx]['context_left_tokens'][-left_quota:]
+        context_left_ids = saved_contexts[idx]['context_left_ids'][-left_quota:]
+
+    if right_quota <= 0:	
+        context_right = []
+        context_right_ids = []
+    else:
+        context_right = saved_contexts[idx]['context_right_tokens'][:right_quota]
+        context_right_ids = saved_contexts[idx]['context_right_ids'][:right_quota]
+
+    try:
+        assert len(context_left) == len(context_left_ids)
+        assert len(context_right) == len(context_right_ids)
+    except AssertionError:
+        import pdb
+        pdb.set_trace()
+
+    context_tokens = ["[CLS]"] + context_left + saved_contexts[idx]['mention_tokens'] + context_right + ["[SEP]"]
+    input_ids = [cls_token_id] + context_left_ids + saved_contexts[idx]['mention_ids'] + context_right_ids + [sep_token_id]
+
+    # add in any additional padding
+    padding = [0] * (max_context_length - len(input_ids))
+    input_ids += padding
+    try:
+        assert len(input_ids) == max_context_length
+    except AssertionError:
+        import pdb
+        pdb.set_trace()
+
+    # Get mention / context tokens
+    mention_idxs = [
+        len(context_left) + 1,  # + 1 for CLS
+        len(context_left) + len(saved_contexts[idx]['mention_tokens']),  # make bounds inclusive (+1-1)
+    ]
+    return {
+        "tokens": context_tokens,
+        "ids": input_ids,
+        "mention_idxs": mention_idxs,
+    }
+
+
 def process_mention_data(
     samples,
     tokenizer,
@@ -158,32 +245,28 @@ def process_mention_data(
 
     ent_start_id = tokenizer.convert_tokens_to_ids(ent_start_token)
     ent_end_id = tokenizer.convert_tokens_to_ids(ent_end_token)
+    cls_token_id = tokenizer.convert_tokens_to_ids("[CLS]")
+    sep_token_id = tokenizer.convert_tokens_to_ids("[SEP]")
     for idx, sample in enumerate(iter_):
         if saved_contexts is not None:
-            assert saved_contexts[idx]['mention'] == sample['mention']
-            assert saved_contexts[idx]['context_left'] == sample['context_left']
-            assert saved_contexts[idx]['context_right'] == sample['context_right']
-            if add_mention_bounds:
-                saved_contexts[idx]['mention_tokens'] = (
-                    [ent_start_token] +
-                    saved_contexts[idx]['mention_tokens'] +
-                    [ent_end_token]
-                )
-                saved_contexts[idx]['mention_ids'] = (
-                    [ent_start_id] +
-                    saved_contexts[idx]['mention_ids'] +
-                    [ent_end_id]
-                )
-            mention_idxs = [
-                len(saved_contexts[idx]['context_left_ids']),
-                len(saved_contexts[idx]['context_left_ids']) + len(saved_contexts[idx]['mention_tokens']) - 1,  # make bounds inclusive
-            ]
-            # TODO VERIFY THE SAVED CONTEXTS
-            context_tokens = {
-                "tokens": saved_contexts[idx]['context_left_tokens'] + saved_contexts[idx]['mention_tokens'] + saved_contexts[idx]['context_right_tokens'],
-                "ids": saved_contexts[idx]['context_left_ids'] + saved_contexts[idx]['mention_ids'] + saved_contexts[idx]['context_right_ids'],
-                "mention_idxs": mention_idxs,
-            }
+            if len(saved_contexts[idx]['mention_tokens']) + 2 > max_context_length:
+                # skip if "[CLS] + mention + [SEP]" is longer
+                continue
+
+            context_tokens = get_context_representation_from_saved(
+                sample=sample,
+                max_context_length=max_context_length,
+                ent_start_token=ent_start_token,
+                ent_end_token=ent_end_token,
+                ent_start_id=ent_start_id,
+                ent_end_id=ent_end_id,
+                cls_token_id=cls_token_id,
+                sep_token_id=sep_token_id,
+                add_mention_bounds=add_mention_bounds,
+                saved_contexts=saved_contexts,
+                idx=idx,
+            )
+
             if do_verify:
                 context_tokens_test = get_context_representation(
                     sample,
@@ -195,7 +278,12 @@ def process_mention_data(
                     ent_end_token,
                     add_mention_bounds=add_mention_bounds,
                 )
-                assert context_tokens == context_tokens_test
+                try:
+                    context_tokens_test['mention_idxs'][1] -= 1
+                    assert context_tokens == context_tokens_test
+                except AssertionError:
+                    import pdb
+                    pdb.set_trace()
         else:
             context_tokens = get_context_representation(
                 sample,
