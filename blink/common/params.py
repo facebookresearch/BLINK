@@ -179,12 +179,14 @@ class BlinkParser(argparse.ArgumentParser):
             help="Don't add tokens around target mention. MUST BE FALSE IF 'mention_aggregation_type' is NONE",
         )
         parser.add_argument(
-            "--last_epoch",
-            default=0,
-            type=int,
-            help="Epoch to restore from when pretraining",
+            "--do_mention_detection",
+            dest="do_mention_detection",
+            action="store_true",
+            default=False,
+            help="Flag for triggering joint mention detection. "
+            "Set 'FALSE' to only use entity linking portion of model "
+            "(assumes gold mention bounds given)",
         )
-
 
     def add_training_args(self, args=None):
         """
@@ -268,6 +270,43 @@ class BlinkParser(argparse.ArgumentParser):
             "--end_idx",
             default=None,
             type=int,
+        )
+        parser.add_argument(
+            "--last_epoch",
+            default=0,
+            type=int,
+            help="Epoch to restore from when pretraining",
+        )
+        parser.add_argument(
+            "--path_to_trainer_state",
+            default=None,
+            type=str,
+            required=False,
+            help="The full path to the last checkpoint's training state to load.",
+        )
+        parser.add_argument(
+            '--dont_distribute_train_samples',
+            default=False,
+            action="store_true",
+            help="Don't distribute all training samples across the epochs (go through all samples every epoch)",
+        )
+        parser.add_argument(
+            "--no_cached_representation",
+            default=False,
+            action="store_true",
+            help="Don't load cached representation",
+        )
+        parser.add_argument(
+            "--freeze_cand_enc",
+            default=False,
+            action="store_true",
+            help="Freeze the candidate encoder",
+        )
+        parser.add_argument(
+            "--load_cand_enc_only",
+            default=False,
+            action="store_true",
+            help="Only load the candidate encoder from saved model path",
         )
 
     def add_eval_args(self, args=None):

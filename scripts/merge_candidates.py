@@ -5,7 +5,7 @@ import os
 import argparse
 
 
-CHUNK_SIZES = 500000
+CHUNK_SIZES = 1500000
 
 parser = argparse.ArgumentParser()
 # /private/home/belindali/BLINK/models/entity_encodings/webqsp_none_biencoder

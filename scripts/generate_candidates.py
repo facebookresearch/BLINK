@@ -11,8 +11,16 @@ import argparse
 
 # TO replicate Ledell's encodings...
 '''
-python scripts/generate_candidates.py --path_to_model_config /private/home/belindali/BLINK/models/biencoder_wiki_large.json \
+python scripts/generate_candidates.py \
+    --path_to_model_config /private/home/belindali/BLINK/models/biencoder_wiki_large.json \
     --path_to_model /private/home/belindali/BLINK/models/biencoder_wiki_large.bin \
+    --entity_dict_path /private/home/belindali/BLINK/models/entity.jsonl \
+    --compare_saved_embeds /private/home/belindali/BLINK/models/all_entities_large.t7 \
+    --saved_cand_ids /private/home/belindali/BLINK/models/entity_token_ids_128.t7 --test
+
+python scripts/generate_candidates.py \
+    --path_to_model_config /private/home/belindali/pretrain/BLINK-mentions/experiments/webqsp/biencoder_none_false_16/training_params.txt \
+    --path_to_model /private/home/belindali/pretrain/BLINK-mentions/experiments/webqsp/biencoder_none_false_16/epoch_4/pytorch_model.bin \
     --entity_dict_path /private/home/belindali/BLINK/models/entity.jsonl \
     --compare_saved_embeds /private/home/belindali/BLINK/models/all_entities_large.t7 \
     --saved_cand_ids /private/home/belindali/BLINK/models/entity_token_ids_128.t7 --test

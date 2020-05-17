@@ -231,7 +231,7 @@ def get_mention_bound_candidates(
             # sample_to_all_context_inputs.append([])
             return None, None, saved_ngrams, sample_idx
 
-    elif do_ner == "single":
+    elif do_ner == "single" or do_ner == "joint":
         # assume single mention boundary
         samples = [{
             "context_left": "",
@@ -491,7 +491,7 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
         silent=False,
         logger=None,
         debug=biencoder_params["debug"],
-        add_mention_bounds=(not biencoder_params["no_mention_bounds"]),
+        add_mention_bounds=(not biencoder_params.get("no_mention_bounds", False)),
         get_cached_representation=False,  # TODO???
     )
     tensor_data = TensorDataset(*tensor_data_tuple)
@@ -502,20 +502,43 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
     return dataloader
 
 
-def _run_biencoder(biencoder, dataloader, candidate_encoding, top_k=100, device="cpu"):
+def _run_biencoder(
+    biencoder, dataloader, candidate_encoding, samples,
+    top_k=100, device="cpu", jointly_extract_mentions=False,
+):
     biencoder.model.eval()
     labels = []
     context_inputs = []
     nns = []
     dists = []
+    idx = 0
     for step, batch in enumerate(tqdm(dataloader)):
         context_input, _, label_ids, mention_idxs = batch
         with torch.no_grad():
-            scores = biencoder.score_candidate(
+            if jointly_extract_mentions:
+                gold_mention_idxs = None
+            else:
+                gold_mention_idxs = mention_idxs.to(device)
+            scores, start_logits, end_logits = biencoder.score_candidate(
                 context_input, None,
                 cand_encs=candidate_encoding.to(device),
-                mention_idxs=mention_idxs.to(device),
+                gold_mention_idxs=gold_mention_idxs,
             )
+            if jointly_extract_mentions:
+                start_pos = start_logits.argmax(1)
+                end_pos = end_logits.argmax(1)
+                mention_idxs = torch.stack([start_pos, end_pos]).t()
+                # take highest scoring mention
+
+        if jointly_extract_mentions:
+            for i, instance in enumerate(mention_idxs):
+                samples[idx]["context_left"] = biencoder.tokenizer.decode(context_input[i].tolist()[:mention_idxs[i,0]])
+                samples[idx]["context_left"] = samples[idx]["context_left"][len('[CLS] '):].strip() + " "  # disrgard CLS token and add space
+                samples[idx]["context_right"] = biencoder.tokenizer.decode(context_input[i].tolist()[mention_idxs[i,1]:])
+                samples[idx]["context_right"] = " " + samples[idx]["context_right"][0].strip()  # disregard padding and add space
+                samples[idx]["mention"] = biencoder.tokenizer.decode(context_input[i].tolist()[mention_idxs[i,0]:mention_idxs[i,1]])
+                idx += 1
+
         dist, indices = scores.topk(top_k)
         labels.extend(label_ids.data.numpy())
         context_inputs.extend(context_input.data.numpy())
@@ -523,7 +546,9 @@ def _run_biencoder(biencoder, dataloader, candidate_encoding, top_k=100, device=
         dists.extend(dist.data.cpu().numpy())
         sys.stdout.write("{}/{} \r".format(step, len(dataloader)))
         sys.stdout.flush()
-    return labels, nns, dists
+    if jointly_extract_mentions:
+        assert idx == len(samples)
+    return labels, nns, dists, samples
 
 
 def _process_crossencoder_dataloader(context_input, label_input, crossencoder_params):
@@ -834,15 +859,23 @@ def run(
             logger.info("Running biencoder...")
             top_k = 100
 
-            labels, nns, dists = _run_biencoder(biencoder, dataloader, candidate_encoding, top_k,
-                device="cpu" if biencoder_params["no_cuda"] else "cuda")
+            labels, nns, dists, samples = _run_biencoder(
+                biencoder, dataloader, candidate_encoding, samples=samples,
+                top_k=top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
+                jointly_extract_mentions=(args.do_ner == "joint"),
+            )
             logger.info("Finished running biencoder")
             
             np.save(os.path.join(args.save_preds_dir, "biencoder_labels.npy"), labels)
             np.save(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), nns)
             np.save(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), dists)
+            json.dump(samples, open(os.path.join(args.save_preds_dir, "samples.json"), "w"))
         else:
             labels, nns, dists = _retrieve_from_saved_biencoder_outs(args.save_preds_dir)
+            if args.do_ner != "joint" and not os.path.exists(os.path.join(args.save_preds_dir, "samples.json")):
+                json.dump(samples, open(os.path.join(args.save_preds_dir, "samples.json"), "w"))  # TODO UNCOMMENT
+            else:
+                samples = json.load(open(os.path.join(args.save_preds_dir, "samples.json")))
 
         logger.info("Merging inputs...")
         samples_merged, labels_merged, nns_merged, dists_merged, entity_mention_bounds_idx, _ = _combine_same_inputs_diff_mention_bounds(
@@ -907,6 +940,15 @@ def run(
                     if 'gold_context_left' in sample:
                         gold_mention_bounds = "{}[{}]{}".format(sample['gold_context_left'],
                             sample['gold_mention'], sample['gold_context_right'])
+                    if 'all_gold_entities_pos' in sample:
+                        utterance = sample["context_left"] + sample["mention"] + sample["context_right"]
+                        gold_mention_bounds_list = []
+                        for pos in sample['all_gold_entities_pos']:
+                            gold_mention_bounds_list.append("{}[{}]{}".format(
+                                utterance[:pos[0]], utterance[pos[0]:pos[1]], utterance[pos[1]:],
+                            ))
+                        gold_mention_bounds = "; ".join(gold_mention_bounds_list)
+
                     # assert input == first_input
                     # assert label == first_label
                     # f.write(e_kbid + "\t" + str(sample['label']) + "\t" + str(input) + "\n")
@@ -933,7 +975,8 @@ def run(
                             all_pred_entities = pred_kbids_sorted[:1]
                             e_mention_bounds = entity_mention_bounds_idx[i][:1].tolist()
                             pred_triples = [(
-                                all_pred_entities[i],
+                                # sample['all_gold_entities'][i],
+                                all_pred_entities[i], # TODO REVERT THIS
                                 len(sample['context_left'][e_mention_bounds[i]]), 
                                 len(sample['context_left'][e_mention_bounds[i]]) + len(sample['mention'][e_mention_bounds[i]]),
                             ) for i in range(len(all_pred_entities))]
@@ -957,7 +1000,7 @@ def run(
                         # "text": e_text,
                         "all_pred_KBids": [id2kb.get(e_id, "") for e_id in entity_list],
                         "input_mention_bounds": input,
-                        "gold_mention_bounds": e_mention_bounds,
+                        "gold_mention_bounds": gold_mention_bounds,
                         "gold_KBid": sample['label'],
                         "scores": distances.tolist(),
                     }
@@ -1287,8 +1330,8 @@ if __name__ == "__main__":
         "--save_preds_dir", type=str, help="Directory to save model predictions to."
     )
     parser.add_argument(
-        "--do_ner", "-n", type=str, default='none', choices=['flair', 'ngram', 'single', 'qa_classifier', 'none'],
-        help="Use automatic NER systems. Options: 'flair', 'ngram', 'single', 'qa_classifier' 'none'."
+        "--do_ner", "-n", type=str, default='none', choices=['joint', 'flair', 'ngram', 'single', 'qa_classifier', 'none'],
+        help="Use automatic NER systems. Options: 'joint', 'flair', 'ngram', 'single', 'qa_classifier' 'none'."
         "(Set 'none' to get gold mention bounds from examples)"
     )
     parser.add_argument(

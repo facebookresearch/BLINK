@@ -1,6 +1,6 @@
 #!/bin/sh
-#SBATCH --output=stdout/%j.out
-#SBATCH --error=stderr/%j.err
+#SBATCH --output=log/%j.out
+#SBATCH --error=log/%j.err
 #SBATCH --partition=priority
 #SBATCH --comment=emnlpdeadline06/01
 #SBATCH --nodes=1
@@ -42,15 +42,18 @@
 # python scripts/merge_candidates.py \
 # --path_to_saved_chunks /private/home/belindali/BLINK/models/entity_encodings/${data}_${mention_agg_type}_biencoder
 
-# sbatch examples/train_biencoder.sh webqsp none both 128
-# sbatch examples/train_biencoder.sh webqsp none predict 512
+# sbatch examples/train_biencoder.sh pretrain none both 128 <true/false> 0
+# sbatch examples/train_biencoder.sh pretrain none predict 512 <true/false> 0
+# sbatch examples/train_biencoder.sh webqsp none train 64 false 16
 data=$1  # webqsp/zeshel/pretrain
-mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none
+mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none/none_no_mentions
 objective=$3  # train/predict/both (default)
-batch_size=$4  # 128 (for training large model)
-chunk_start=$5
-chunk_end=$6
-epoch=$7
+batch_size=$4  # 128 (for pretraining large model)
+joint_mention_detection=$5  # "true"/false
+context_length=$6
+chunk_start=$7
+chunk_end=$8
+epoch=$9
 
 export PYTHONPATH=.
 
@@ -67,12 +70,21 @@ then
   data_path="/private/home/ledell/zeshel/data/biencoder/"
 fi
 
-if [ "${mention_agg_type}" != "none" ]
+if [ "${mention_agg_type}" = "none" ]
 then
-  all_mention_args="--no_mention_bounds \
-  --mention_aggregation_type ${mention_agg_type}"
-else
   all_mention_args=""
+elif [ "${mention_agg_type}" = "none_no_mentions" ]
+then
+  all_mention_args="--no_mention_bounds"
+else
+  all_mention_args="--no_mention_bounds \
+    --mention_aggregation_type ${mention_agg_type}"
+fi
+
+if [ "${joint_mention_detection}" = "true" ]
+then
+  echo "doing joint mention detection"
+  all_mention_args="${all_mention_args} --do_mention_detection"
 fi
 
 if [ "${batch_size}" = "" ]
@@ -85,49 +97,75 @@ then
   objective="both"
 fi
 
+if [ "${context_length}" = "" ]
+then
+  context_length="128"
+fi
+
+if [ "${epoch}" = "" ]
+then
+  epoch=-1
+fi
+
 if [ "${objective}" = "both" ] || [ "${objective}" = "train" ]
 then
   echo "Running ${mention_agg_type} biencoder training on ${data} dataset."
   if [ "${data}" = "pretrain" ]
   then
-    if [ "${epoch}" = "" ]
+    output_path=experiments/pretrain/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}
+    if [ "${epoch}" != "-1" ]
     then
-      epoch=0
+      model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
     fi
+
+    echo "Mention aggregation args: ${all_mention_args}"
+    echo "Model path loading args: ${model_path_arg}"
     python blink/biencoder/train_biencoder.py \
-      --output_path data/experiments/pretrain/biencoder_${mention_agg_type}_2 \
+      --output_path ${output_path} \
       --data_path /private/home/ledell/data/wiki_ent2 \
       --num_train_epochs 100 \
       --learning_rate 0.00001 \
       --train_batch_size ${batch_size} \
       --eval_batch_size ${batch_size} \
       --bert_model bert-large-uncased \
-      --data_parallel ${all_mention_args} \
+      ${all_mention_args} \
       --eval_interval 1000 \
-      --last_epoch ${epoch}
-      #--debug \
+      --last_epoch ${epoch} ${model_path_arg} \
+      --max_context_length ${context_length} \
+      --data_parallel
+      # --debug
       # --start_idx ${chunk_start} --end_idx ${chunk_end}   # TODO DELETE THIS LATER!!!!!
   else
+    #--load_cand_enc_only \
+    output_path="experiments/${data}/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}"
+    if [ "${epoch}" != "-1" ]
+    then
+      model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
+    else
+      model_path_arg="--path_to_model /private/home/ledell/BLINK-Internal/models/biencoder_wiki_large.bin"
+    fi
     python blink/biencoder/train_biencoder.py \
-      --output_path data/experiments/${data}/biencoder_${mention_agg_type} \
-      --path_to_model /private/home/ledell/BLINK-Internal/models/biencoder_wiki_large.bin \
+      --output_path $output_path \
+      ${model_path_arg} --freeze_cand_enc \
+      --no_cached_representation --dont_distribute_train_samples \
       --data_path ${data_path} \
       --num_train_epochs 5 \
       --learning_rate 0.00001 \
-      --max_context_length 256 \
-      --max_cand_length 256 \
+      --max_context_length ${context_length} \
+      --max_cand_length 128 \
       --train_batch_size ${batch_size} \
-      --eval_batch_size ${batch_size} \
+      --eval_batch_size 64 \
       --bert_model bert-large-uncased \
-      --data_parallel ${all_mention_args}
+      --eval_interval 500 \
+      ${all_mention_args} --data_parallel  #--debug  #
   fi
 fi
 
 # echo "Running ${mention_agg_type} biencoder full evaluation on ${data} dataset."
 # python blink/biencoder/eval_biencoder.py \
-#   --path_to_model data/experiments/${data}/biencoder_${mention_agg_type}/pytorch_model.bin \
+#   --path_to_model experiments/${data}/biencoder_${mention_agg_type}/pytorch_model.bin \
 #   --data_path ${data_path} \
-#   --output_path data/experiments/nn_preds \
+#   --output_path experiments/nn_preds \
 #   --encode_batch_size ${batch_size} \
 #   --bert_model bert-large-uncased
 
@@ -144,19 +182,21 @@ then
   
   directory=${data}
 
-  model_config=data/experiments/${directory}/biencoder_${mention_agg_type}/training_params.txt
-  save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder
+  model_config=experiments/${directory}/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}/training_params.txt
+  save_dir=models/entity_encodings/${directory}_${mention_agg_type}_biencoder_${joint_mention_detection}_${context_length}
   if [ "${data}" = "pretrain" ]
   then
-    model_path=data/experiments/${directory}/biencoder_${mention_agg_type}/epoch_${epoch}/pytorch_model.bin  # TODO REVISE THIS LATER
-    save_dir=/private/home/belindali/BLINK/models/entity_encodings/${directory}_${mention_agg_type}_biencoder_${epoch}
+    model_path=experiments/${directory}/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}/epoch_${epoch}/pytorch_model.bin  # TODO REVISE THIS LATER
+    save_dir=models/entity_encodings/${directory}_${mention_agg_type}_biencoder_${joint_mention_detection}_${context_length}_${epoch}
   elif [ "${data}" = "zero_shot" ]
   then
     model_path=models/biencoder_wiki_large.bin
     model_config=models/biencoder_wiki_large.json
   else
-    model_path=data/experiments/${directory}/biencoder_${mention_agg_type}/pytorch_model.bin
+    model_path=experiments/${directory}/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}/pytorch_model.bin
   fi
+  mkdir -p save_dir
+  chmod 777 save_dir
 
   if [ ! -f "${save_dir}/training_params.txt" ]
   then

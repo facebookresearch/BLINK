@@ -42,7 +42,7 @@ logger = None
 # for a batch of size B, the labels from the batch are used as label candidates
 # B is controlled by the parameter eval_batch_size
 def evaluate(
-    reranker, eval_dataloader, params, device, logger,
+    reranker, eval_dataloader, params, device, logger, cand_encs=None,
 ):
     reranker.model.eval()
     if params["silent"]:
@@ -56,25 +56,44 @@ def evaluate(
     nb_eval_examples = 0
     nb_eval_steps = 0
 
+    if cand_encs is not None:
+        torch.cuda.empty_cache()
+        cand_encs = cand_encs.to(device)
+
     for step, batch in enumerate(iter_):
         batch = tuple(t.to(device) for t in batch)
         context_input = batch[0]	
         candidate_input = batch[1]
+        label_ids = batch[2].squeeze(1) if params["freeze_cand_enc"] else None
+        if params["debug"] and label_ids is not None:
+            label_ids[label_ids > 199] = 199
         mention_idxs = batch[-1]
         with torch.no_grad():
-            eval_loss, logits = reranker(context_input, candidate_input, mention_idxs=mention_idxs)
+            # if cand_encs is not None:
+            logits = reranker(
+                context_input, candidate_input,
+                cand_encs=cand_encs,# label_input=label_ids,
+                gold_mention_idxs=mention_idxs,
+                return_loss=False,
+            )
 
         logits = logits.detach().cpu().numpy()
-        # Using in-batch negatives, the label ids are diagonal
-        label_ids = torch.LongTensor(
+        if not params["freeze_cand_enc"]:
+            # Using in-batch negatives, the label ids are diagonal
+            label_ids = torch.LongTensor(
                 torch.arange(params["eval_batch_size"])
-        ).numpy()
+            )
+        label_ids = label_ids.detach().cpu().numpy()
         tmp_eval_accuracy = utils.accuracy(logits, label_ids)
 
         eval_accuracy += tmp_eval_accuracy
 
         nb_eval_examples += context_input.size(0)
         nb_eval_steps += 1
+
+    if cand_encs is not None:
+        cand_encs = cand_encs.to("cpu")
+        torch.cuda.empty_cache()
 
     normalized_eval_accuracy = eval_accuracy / nb_eval_examples
     logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
@@ -159,6 +178,16 @@ def main(params):
         id2line = open("/private/home/belindali/BLINK/models/entity.jsonl").readlines() # TODO DONT HARDCODE THESE PATHS
         entity2id = {json.loads(id2line[i])['entity']: i for i in range(len(id2line))}
         tokenized_contexts_dir = os.path.join("/private/home/belindali/BLINK/models/tokenized_contexts/", params["data_path"].split('/')[-1]) # TODO DONT HARDCODE THESE PATHS
+
+    cand_encs = None
+    if params["freeze_cand_enc"]:
+        cand_encs = torch.load("/private/home/belindali/BLINK/models/all_entities_large.t7")  # TODO DONT HARDCODE THESE PATHS
+        # cand_encs_npy = torch.load("/private/home/belindali/BLINK/models/all_entities_large.t7")  # TODO DONT HARDCODE THESE PATHS
+        if params["debug"]:
+            cand_encs = cand_encs[:200]
+        # cand_encs = cand_encs.to(device)
+        # TODO label_input (don't we have label_idx???)
+
     train_data, train_tensor_data_tuple = data.process_mention_data(
         samples=train_samples,
         tokenizer=tokenizer,
@@ -172,7 +201,7 @@ def main(params):
         candidate_token_ids=candidate_token_ids,
         entity2id=entity2id,
         saved_context_file=os.path.join(tokenized_contexts_dir, "train.json"),
-        get_cached_representation=(not params["debug"]),
+        get_cached_representation=(not params["debug"] and not params["no_cached_representation"]),
     )
     logger.info("Finished reading train samples")
 
@@ -195,7 +224,7 @@ def main(params):
         candidate_token_ids=candidate_token_ids,
         entity2id=entity2id,
         saved_context_file=os.path.join(tokenized_contexts_dir, "valid.json"),
-        get_cached_representation=(not params["debug"]),
+        get_cached_representation=(not params["debug"] and not params["no_cached_representation"]),
     )
     valid_tensor_data = TensorDataset(*valid_tensor_data)
     valid_sampler = SequentialSampler(valid_tensor_data)
@@ -208,7 +237,7 @@ def main(params):
 
     # evaluate before training
     results = evaluate(
-        reranker, valid_dataloader, params, device=device, logger=logger,
+        reranker, valid_dataloader, params, cand_encs=cand_encs, device=device, logger=logger,
     )
 
     number_of_samples_per_dataset = {}
@@ -225,22 +254,38 @@ def main(params):
     )
 
     num_train_epochs = params["num_train_epochs"]
-    num_samples_per_batch = len(train_samples) // num_train_epochs
+    if params["dont_distribute_train_samples"]:
+        num_samples_per_batch = len(train_samples)
+    else:
+        num_samples_per_batch = len(train_samples) // num_train_epochs
 
+
+    trainer_path = params.get("path_to_trainer_state", None)
     optimizer = get_optimizer(model, params)
-    scheduler = get_scheduler(params, optimizer, min(len(train_tensor_data_tuple[0]), num_samples_per_batch), logger)
+    scheduler = get_scheduler(params, optimizer, min(
+        len(train_tensor_data_tuple[0]), num_samples_per_batch,
+    ), logger)
+    if trainer_path is not None:
+        training_state = torch.load(trainer_path)
+        optimizer.load_state_dict(training_state["optimizer"])
+        scheduler.load_state_dict(training_state["scheduler"])
+        logger.info("Loaded saved training state")
 
     model.train()
 
     best_epoch_idx = -1
     best_score = -1
     logger.info("Num samples per batch : %d" % num_samples_per_batch)
-    for epoch_idx in trange(params["last_epoch"], int(num_train_epochs), desc="Epoch"):
+    for epoch_idx in trange(params["last_epoch"] + 1, int(num_train_epochs), desc="Epoch"):
         tr_loss = 0
         results = None
 
-        start_idx = epoch_idx * num_samples_per_batch
-        end_idx = (epoch_idx + 1) * num_samples_per_batch
+        if params["dont_distribute_train_samples"]:
+            start_idx = 0
+            end_idx = num_samples_per_batch
+        else:
+            start_idx = epoch_idx * num_samples_per_batch
+            end_idx = (epoch_idx + 1) * num_samples_per_batch
 
         batch_train_tensor_data = TensorDataset(
             *[element[start_idx:end_idx] for element in train_tensor_data_tuple]
@@ -263,8 +308,25 @@ def main(params):
             batch = tuple(t.to(device) for t in batch)
             context_input = batch[0]	
             candidate_input = batch[1]
+            label_ids = batch[2].squeeze(1) if params["freeze_cand_enc"] else None
             mention_idxs = batch[-1]
-            loss, _ = reranker(context_input, candidate_input, mention_idxs=mention_idxs)
+            if params["debug"] and label_ids is not None:
+                label_ids[label_ids > 199] = 199
+            # TODO pass in all candidate encodings, AND label_input
+            #
+
+            cand_encs_input = None
+            label_input = None
+            if cand_encs is not None and label_ids is not None:
+                # TODO GET CLOSEST N CANDIDATES HERE (AND APPROPRIATE LABELS)...
+                cand_encs_input = torch.index_select(cand_encs, 0, label_ids.to("cpu")).to(device)
+                # neg_cand_encs_input = 
+                label_input = torch.ones(cand_encs_input.size(0)).to(device)
+            loss, _ = reranker(
+                context_input, candidate_input,
+                cand_encs=cand_encs_input, label_input=label_input,
+                gold_mention_idxs=mention_idxs,
+            )
 
             # if n_gpu > 1:
             #     loss = loss.mean() # mean() to average on multi-gpu.
@@ -296,8 +358,9 @@ def main(params):
 
             if (step + 1) % (params["eval_interval"] * grad_acc_steps) == 0:
                 logger.info("Evaluation on the development dataset")
+                loss = None  # for GPU mem management
                 evaluate(
-                    reranker, valid_dataloader, params, device=device, logger=logger,
+                    reranker, valid_dataloader, params, cand_encs=cand_encs, device=device, logger=logger,
                 )
                 model.train()
                 logger.info("\n")
@@ -314,10 +377,14 @@ def main(params):
             model_output_path, "epoch_{}".format(epoch_idx)
         )
         utils.save_model(model, tokenizer, epoch_output_folder_path)
+        torch.save({
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+        }, os.path.join(epoch_output_folder_path, "training_state.th"))
 
         output_eval_file = os.path.join(epoch_output_folder_path, "eval_results.txt")
         results = evaluate(
-            reranker, valid_dataloader, params, device=device, logger=logger,
+            reranker, valid_dataloader, params, cand_encs=cand_encs, device=device, logger=logger,
         )
 
         ls = [best_score, results["normalized_accuracy"]]
@@ -343,7 +410,7 @@ def main(params):
 
     if params["evaluate"]:
         params["path_to_model"] = model_output_path
-        evaluate(params, logger=logger)
+        evaluate(params, cand_encs=cand_encs, logger=logger)
 
 
 if __name__ == "__main__":
