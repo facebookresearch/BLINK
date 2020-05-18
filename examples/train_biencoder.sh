@@ -48,7 +48,7 @@
 data=$1  # webqsp/zeshel/pretrain
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none/none_no_mentions
 objective=$3  # train/predict/both (default)
-batch_size=$4  # 128 (for pretraining large model)
+batch_size=$4  # 128 (for pretraining large model / 128 seqlen) / 32 (for finetuning w/ adversaries / 16 seqlen)
 joint_mention_detection=$5  # "true"/false
 context_length=$6
 chunk_start=$7
@@ -87,11 +87,6 @@ then
   all_mention_args="${all_mention_args} --do_mention_detection"
 fi
 
-if [ "${batch_size}" = "" ]
-then
-  batch_size="256"
-fi
-
 if [ "${objective}" = "" ]
 then
   objective="both"
@@ -112,6 +107,10 @@ then
   echo "Running ${mention_agg_type} biencoder training on ${data} dataset."
   if [ "${data}" = "pretrain" ]
   then
+    if [ "${batch_size}" = "" ]
+    then
+      batch_size="128"
+    fi
     output_path=experiments/pretrain/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}
     if [ "${epoch}" != "-1" ]
     then
@@ -136,6 +135,10 @@ then
       # --debug
       # --start_idx ${chunk_start} --end_idx ${chunk_end}   # TODO DELETE THIS LATER!!!!!
   else
+    if [ "${batch_size}" = "" ]
+    then
+      batch_size="32"
+    fi
     #--load_cand_enc_only \
     output_path="experiments/${data}/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}"
     if [ "${epoch}" != "-1" ]
@@ -149,7 +152,7 @@ then
       ${model_path_arg} --freeze_cand_enc \
       --no_cached_representation --dont_distribute_train_samples \
       --data_path ${data_path} \
-      --num_train_epochs 5 \
+      --num_train_epochs 10 \
       --learning_rate 0.00001 \
       --max_context_length ${context_length} \
       --max_cand_length 128 \

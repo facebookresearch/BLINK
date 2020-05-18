@@ -6,6 +6,7 @@
 #
 import os
 import argparse
+import faiss
 import pickle
 import torch
 import json
@@ -37,6 +38,7 @@ from blink.common.params import BlinkParser
 
 
 logger = None
+np.random.seed(1234)  # reproducible for FAISS indexer
 
 # The evaluate function during training uses in-batch negatives:
 # for a batch of size B, the labels from the batch are used as label candidates
@@ -70,7 +72,7 @@ def evaluate(
         mention_idxs = batch[-1]
         with torch.no_grad():
             # if cand_encs is not None:
-            logits = reranker(
+            logits, start_logits, end_logits = reranker(
                 context_input, candidate_input,
                 cand_encs=cand_encs,# label_input=label_ids,
                 gold_mention_idxs=mention_idxs,
@@ -182,11 +184,26 @@ def main(params):
     cand_encs = None
     if params["freeze_cand_enc"]:
         cand_encs = torch.load("/private/home/belindali/BLINK/models/all_entities_large.t7")  # TODO DONT HARDCODE THESE PATHS
-        # cand_encs_npy = torch.load("/private/home/belindali/BLINK/models/all_entities_large.t7")  # TODO DONT HARDCODE THESE PATHS
+        cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
+        logger.info("Loaded saved entity encodings")
         if params["debug"]:
             cand_encs = cand_encs[:200]
-        # cand_encs = cand_encs.to(device)
-        # TODO label_input (don't we have label_idx???)
+            cand_encs_npy = cand_encs_npy[:200]
+        
+        # build FAISS index
+        d = cand_encs_npy.shape[1]
+        nsplits = 100
+        cand_encs_quantizer = faiss.IndexFlatIP(d)
+        assert cand_encs_quantizer.is_trained
+        cand_encs_index = faiss.IndexIVFFlat(cand_encs_quantizer, d, nsplits, faiss.METRIC_INNER_PRODUCT)
+        assert not cand_encs_index.is_trained
+        cand_encs_index.train(cand_encs_npy)  # 15s
+        assert cand_encs_index.is_trained
+        cand_encs_index.add(cand_encs_npy)  # 41s
+        assert cand_encs_index.ntotal == cand_encs_npy.shape[0]
+        cand_encs_index.nprobe = 10
+        logger.info("Built and trained FAISS index on entity encodings")
+        num_neighbors = 10
 
     train_data, train_tensor_data_tuple = data.process_mention_data(
         samples=train_samples,
@@ -317,16 +334,60 @@ def main(params):
 
             cand_encs_input = None
             label_input = None
+            mention_reps_input = None
+            start_logits = None
+            end_logits = None
             if cand_encs is not None and label_ids is not None:
                 # TODO GET CLOSEST N CANDIDATES HERE (AND APPROPRIATE LABELS)...
-                cand_encs_input = torch.index_select(cand_encs, 0, label_ids.to("cpu")).to(device)
-                # neg_cand_encs_input = 
-                label_input = torch.ones(cand_encs_input.size(0)).to(device)
+                pos_cand_encs_input = torch.index_select(cand_encs, 0, label_ids.to("cpu"))
+                mention_reps, start_logits, end_logits = reranker.encode_context(context_input, gold_mention_idxs=mention_idxs)
+                _, neg_cand_encs_input_idxs = cand_encs_index.search(mention_reps.detach().cpu().numpy(), num_neighbors)
+                neg_cand_encs_input_idxs = torch.from_numpy(neg_cand_encs_input_idxs)
+                # set "correct" closest entities to -1
+                neg_cand_encs_input_idxs[neg_cand_encs_input_idxs - label_ids.to("cpu").unsqueeze(-1) == 0] = -1
+                # create neg_example_idx
+                neg_example_idx = torch.arange(neg_cand_encs_input_idxs.size(0)).unsqueeze(-1) # corresponding example for each negative
+                neg_example_idx = neg_example_idx.expand(neg_cand_encs_input_idxs.size(0), neg_cand_encs_input_idxs.size(1))
+
+                # flatten and filter -1
+                neg_cand_encs_input_idxs = neg_cand_encs_input_idxs.flatten()
+                neg_example_idx = neg_example_idx.flatten()
+                mask = neg_cand_encs_input_idxs != -1
+                neg_cand_encs_input_idxs = neg_cand_encs_input_idxs[mask]
+                neg_example_idx = neg_example_idx[mask]
+
+                # create input tensors (concat [pos examples, neg examples])
+                mention_reps_input = torch.cat([
+                    mention_reps, mention_reps[neg_example_idx.to(device)],
+                ])
+                assert mention_reps.size(0) == pos_cand_encs_input.size(0)
+                neg_cand_encs_input = torch.index_select(
+                    cand_encs, 0, neg_cand_encs_input_idxs.flatten()
+                )
+                label_input = torch.cat([
+                    torch.ones(pos_cand_encs_input.size(0)),
+                    torch.zeros(neg_cand_encs_input.size(0)),
+                ]).to(device)
+                cand_encs_input = torch.cat([
+                    pos_cand_encs_input, neg_cand_encs_input,
+                ]).to(device)
             loss, _ = reranker(
                 context_input, candidate_input,
-                cand_encs=cand_encs_input, label_input=label_input,
-                gold_mention_idxs=mention_idxs,
+                cand_encs=cand_encs_input, text_encs=mention_reps_input,
+                start_logits=start_logits, end_logits=end_logits,
+                label_input=label_input, gold_mention_idxs=mention_idxs,
             )
+            if params["debug"] and label_ids is not None:
+                D, _ = cand_encs_index.search(mention_reps.detach().cpu().numpy(), num_neighbors)
+                D = torch.tensor(D)
+                D = D.flatten()[mask]
+                _, scores = reranker(
+                    context_input, candidate_input,
+                    cand_encs=cand_encs_input, text_encs=mention_reps_input,
+                    start_logits=start_logits, end_logits=end_logits,
+                    label_input=label_input, gold_mention_idxs=mention_idxs,
+                )
+                assert ((D - scores[mention_reps.size(0):].to("cpu")) < 0.0005).all()
 
             # if n_gpu > 1:
             #     loss = loss.mean() # mean() to average on multi-gpu.
@@ -359,6 +420,11 @@ def main(params):
             if (step + 1) % (params["eval_interval"] * grad_acc_steps) == 0:
                 logger.info("Evaluation on the development dataset")
                 loss = None  # for GPU mem management
+                mention_reps = None
+                mention_reps_input = None
+                label_input = None
+                cand_encs_input = None
+
                 evaluate(
                     reranker, valid_dataloader, params, cand_encs=cand_encs, device=device, logger=logger,
                 )

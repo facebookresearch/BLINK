@@ -14,6 +14,7 @@
 
 # example usage
 # bash run_eval_slurm.sh 64 webqsp_filtered zero_shot qa_classifier dev false 0 false
+# bash run_eval_slurm.sh 64 webqsp_filtered finetuned_webqsp qa_classifier dev false 0 false
 # bash run_eval_slurm.sh 64 webqsp_filtered webqsp_none_biencoder qa_classifier dev false 0 false
 # bash run_eval_slurm.sh 64 webqsp_filtered zeshel_none_biencoder qa_classifier dev false 0 false
 # bash run_eval_slurm.sh 64 webqsp_filtered pretrain_none_biencoder qa_classifier dev false 0 false
