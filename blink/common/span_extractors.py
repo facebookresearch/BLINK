@@ -102,7 +102,12 @@ def batched_index_select(
     """
     if flattened_indices is None:
         # Shape: (batch_size * d_1 * ... * d_n)
-        flattened_indices = flatten_and_batch_shift_indices(indices, target.size(1))
+        try:
+            flattened_indices = flatten_and_batch_shift_indices(indices, target.size(1))
+        except:
+            print("indices: {}".format(indices))
+            print("target: {}".format(target))
+            flattened_indices = flatten_and_batch_shift_indices(indices, target.size(1))
 
     # Shape: (batch_size * sequence_length, embedding_size)
     flattened_target = target.view(-1, target.size(-1))

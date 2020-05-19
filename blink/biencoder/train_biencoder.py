@@ -44,7 +44,7 @@ np.random.seed(1234)  # reproducible for FAISS indexer
 # for a batch of size B, the labels from the batch are used as label candidates
 # B is controlled by the parameter eval_batch_size
 def evaluate(
-    reranker, eval_dataloader, params, device, logger, cand_encs=None,
+    reranker, eval_dataloader, params, device, logger, cand_encs=None, faiss_index=None,
 ):
     reranker.model.eval()
     if params["silent"]:
@@ -58,7 +58,7 @@ def evaluate(
     nb_eval_examples = 0
     nb_eval_steps = 0
 
-    if cand_encs is not None:
+    if cand_encs is not None and not params["freeze_cand_enc"]:
         torch.cuda.empty_cache()
         cand_encs = cand_encs.to(device)
 
@@ -69,24 +69,42 @@ def evaluate(
         label_ids = batch[2].squeeze(1) if params["freeze_cand_enc"] else None
         if params["debug"] and label_ids is not None:
             label_ids[label_ids > 199] = 199
-        mention_idxs = batch[-1]
+        
         with torch.no_grad():
-            # if cand_encs is not None:
-            logits, start_logits, end_logits = reranker(
-                context_input, candidate_input,
-                cand_encs=cand_encs,# label_input=label_ids,
-                gold_mention_idxs=mention_idxs,
-                return_loss=False,
-            )
+            # evaluate with joint mention detection
+            if (
+                hasattr(reranker.model, 'do_mention_detection') and reranker.model.do_mention_detection
+            ) or (
+                hasattr(reranker.model, 'module') and reranker.model.module.do_mention_detection
+            ):
+                mention_idxs = None
+            else:
+                mention_idxs = batch[-1]
 
-        logits = logits.detach().cpu().numpy()
-        if not params["freeze_cand_enc"]:
-            # Using in-batch negatives, the label ids are diagonal
-            label_ids = torch.LongTensor(
-                torch.arange(params["eval_batch_size"])
-            )
-        label_ids = label_ids.detach().cpu().numpy()
-        tmp_eval_accuracy = utils.accuracy(logits, label_ids)
+            if params["freeze_cand_enc"]:
+                # get mention encoding
+                embedding_context, start_logits, end_logits = reranker.encode_context(
+                    context_input, gold_mention_idxs=mention_idxs
+                )
+                # do faiss search for closest entity
+                D, I = faiss_index.search(embedding_context.detach().cpu().numpy(), 1)
+                I = I.flatten()
+                tmp_eval_accuracy = np.sum(I == label_ids.detach().cpu().numpy())
+            else:
+                logits, start_logits, end_logits = reranker(
+                    context_input, candidate_input,
+                    cand_encs=cand_encs,# label_input=label_ids,
+                    gold_mention_idxs=mention_idxs,
+                    return_loss=False,
+                )
+
+                logits = logits.detach().cpu().numpy()
+                # Using in-batch negatives, the label ids are diagonal
+                label_ids = torch.LongTensor(
+                    torch.arange(params["eval_batch_size"])
+                )
+                label_ids = label_ids.detach().cpu().numpy()
+                tmp_eval_accuracy = utils.accuracy(logits, label_ids)
 
         eval_accuracy += tmp_eval_accuracy
 
@@ -193,6 +211,7 @@ def main(params):
         # build FAISS index
         d = cand_encs_npy.shape[1]
         nsplits = 100
+        cand_encs_flat_index = faiss.IndexFlatIP(d)
         cand_encs_quantizer = faiss.IndexFlatIP(d)
         assert cand_encs_quantizer.is_trained
         cand_encs_index = faiss.IndexIVFFlat(cand_encs_quantizer, d, nsplits, faiss.METRIC_INNER_PRODUCT)
@@ -200,8 +219,10 @@ def main(params):
         cand_encs_index.train(cand_encs_npy)  # 15s
         assert cand_encs_index.is_trained
         cand_encs_index.add(cand_encs_npy)  # 41s
+        cand_encs_flat_index.add(cand_encs_npy)
         assert cand_encs_index.ntotal == cand_encs_npy.shape[0]
-        cand_encs_index.nprobe = 10
+        assert cand_encs_flat_index.ntotal == cand_encs_npy.shape[0]
+        cand_encs_index.nprobe = 20
         logger.info("Built and trained FAISS index on entity encodings")
         num_neighbors = 10
 
@@ -254,7 +275,9 @@ def main(params):
 
     # evaluate before training
     results = evaluate(
-        reranker, valid_dataloader, params, cand_encs=cand_encs, device=device, logger=logger,
+        reranker, valid_dataloader, params,
+        cand_encs=cand_encs, device=device,
+        logger=logger, faiss_index=cand_encs_flat_index,
     )
 
     number_of_samples_per_dataset = {}
@@ -337,7 +360,9 @@ def main(params):
             mention_reps_input = None
             start_logits = None
             end_logits = None
-            if cand_encs is not None and label_ids is not None:
+            if params["adversarial_training"]:
+                cand_encs_index.nprobe = 20
+                assert cand_encs is not None and label_ids is not None  # due to params["freeze_cand_enc"] being set
                 # TODO GET CLOSEST N CANDIDATES HERE (AND APPROPRIATE LABELS)...
                 pos_cand_encs_input = torch.index_select(cand_encs, 0, label_ids.to("cpu"))
                 mention_reps, start_logits, end_logits = reranker.encode_context(context_input, gold_mention_idxs=mention_idxs)
@@ -377,7 +402,7 @@ def main(params):
                 start_logits=start_logits, end_logits=end_logits,
                 label_input=label_input, gold_mention_idxs=mention_idxs,
             )
-            if params["debug"] and label_ids is not None:
+            if params["debug"] and params["adversarial_training"]:
                 D, _ = cand_encs_index.search(mention_reps.detach().cpu().numpy(), num_neighbors)
                 D = torch.tensor(D)
                 D = D.flatten()[mask]
@@ -426,7 +451,9 @@ def main(params):
                 cand_encs_input = None
 
                 evaluate(
-                    reranker, valid_dataloader, params, cand_encs=cand_encs, device=device, logger=logger,
+                    reranker, valid_dataloader, params,
+                    cand_encs=cand_encs, device=device,
+                    logger=logger, faiss_index=cand_encs_flat_index,
                 )
                 model.train()
                 logger.info("\n")
@@ -449,8 +476,17 @@ def main(params):
         }, os.path.join(epoch_output_folder_path, "training_state.th"))
 
         output_eval_file = os.path.join(epoch_output_folder_path, "eval_results.txt")
+        logger.info("Valid data evaluation")
         results = evaluate(
-            reranker, valid_dataloader, params, cand_encs=cand_encs, device=device, logger=logger,
+            reranker, valid_dataloader, params,
+            cand_encs=cand_encs, device=device,
+            logger=logger, faiss_index=cand_encs_flat_index,
+        )
+        logger.info("Train data evaluation")
+        results = evaluate(
+            reranker, train_dataloader, params,
+            cand_encs=cand_encs, device=device,
+            logger=logger, faiss_index=cand_encs_flat_index,
         )
 
         ls = [best_score, results["normalized_accuracy"]]
@@ -476,7 +512,7 @@ def main(params):
 
     if params["evaluate"]:
         params["path_to_model"] = model_output_path
-        evaluate(params, cand_encs=cand_encs, logger=logger)
+        evaluate(params, cand_encs=cand_encs, logger=logger, faiss_index=cand_encs_flat_index)
 
 
 if __name__ == "__main__":

@@ -51,9 +51,10 @@ objective=$3  # train/predict/both (default)
 batch_size=$4  # 128 (for pretraining large model / 128 seqlen) / 32 (for finetuning w/ adversaries / 16 seqlen)
 joint_mention_detection=$5  # "true"/false
 context_length=$6
-chunk_start=$7
-chunk_end=$8
-epoch=$9
+load_saved_cand_encs=$7  # true/false
+chunk_start=$8
+chunk_end=$9
+epoch=${10}
 
 export PYTHONPATH=.
 
@@ -87,6 +88,12 @@ then
   all_mention_args="${all_mention_args} --do_mention_detection"
 fi
 
+if [ "${load_saved_cand_encs}" = "true" ]
+then
+  echo "loading + freezing saved candidate encodings"
+  cand_enc_args="--freeze_cand_enc --load_cand_enc_only --adversarial_training"
+fi
+
 if [ "${objective}" = "" ]
 then
   objective="both"
@@ -111,7 +118,7 @@ then
     then
       batch_size="128"
     fi
-    output_path=experiments/pretrain/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}
+    output_path="experiments/pretrain/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}"
     if [ "${epoch}" != "-1" ]
     then
       model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
@@ -127,11 +134,12 @@ then
       --train_batch_size ${batch_size} \
       --eval_batch_size ${batch_size} \
       --bert_model bert-large-uncased \
-      ${all_mention_args} \
+      ${all_mention_args} ${cand_enc_args} \
       --eval_interval 1000 \
       --last_epoch ${epoch} ${model_path_arg} \
       --max_context_length ${context_length} \
       --data_parallel
+      # --adversarial_training
       # --debug
       # --start_idx ${chunk_start} --end_idx ${chunk_end}   # TODO DELETE THIS LATER!!!!!
   else
@@ -140,19 +148,23 @@ then
       batch_size="32"
     fi
     #--load_cand_enc_only \
-    output_path="experiments/${data}/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}"
+    output_path="experiments/${data}/biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}"
     if [ "${epoch}" != "-1" ]
     then
       model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
+      if [ "${load_saved_cand_encs}" = "true" ]
+      then
+        cand_enc_args="--freeze_cand_enc --adversarial_training"
+      fi
     else
       model_path_arg="--path_to_model /private/home/ledell/BLINK-Internal/models/biencoder_wiki_large.bin"
     fi
     python blink/biencoder/train_biencoder.py \
       --output_path $output_path \
-      ${model_path_arg} --freeze_cand_enc \
+      ${model_path_arg} --freeze_cand_enc  ${cand_enc_args} \
       --no_cached_representation --dont_distribute_train_samples \
       --data_path ${data_path} \
-      --num_train_epochs 10 \
+      --num_train_epochs 100 \
       --learning_rate 0.00001 \
       --max_context_length ${context_length} \
       --max_cand_length 128 \
@@ -160,7 +172,9 @@ then
       --eval_batch_size 64 \
       --bert_model bert-large-uncased \
       --eval_interval 500 \
+      --last_epoch ${epoch} \
       ${all_mention_args} --data_parallel  #--debug  #
+      # --adversarial_training
   fi
 fi
 
@@ -203,13 +217,13 @@ then
 
   if [ ! -f "${save_dir}/training_params.txt" ]
   then
-    echo "copying training params to ${save_dir}/training_params.txt"
+    echo "copying training params from ${model_config} to ${save_dir}/training_params.txt"
     cp ${model_config} ${save_dir}/training_params.txt
   fi
 
   if [ ! -f "${save_dir}/pytorch_model.bin" ]
   then
-    echo "copying saved model bin to ${save_dir}/pytorch_model.bin"
+    echo "copying saved model bin from ${model_path} to ${save_dir}/pytorch_model.bin"
     cp ${model_path} ${save_dir}/pytorch_model.bin
   fi
 

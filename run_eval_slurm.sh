@@ -14,14 +14,16 @@
 
 # example usage
 # bash run_eval_slurm.sh 64 webqsp_filtered zero_shot qa_classifier dev false 0 false
-# bash run_eval_slurm.sh 64 webqsp_filtered finetuned_webqsp qa_classifier dev false 0 false
+# bash run_eval_slurm.sh 64 webqsp_filtered "finetuned_webqsp;biencoder_none_false_16_2;9 qa_classifier" dev false 0 false
+# bash run_eval_slurm.sh 64 webqsp_filtered "finetuned_webqsp;<model_folder>;<best_epoch>" qa_classifier dev false 0 false
+
 # bash run_eval_slurm.sh 64 webqsp_filtered webqsp_none_biencoder qa_classifier dev false 0 false
 # bash run_eval_slurm.sh 64 webqsp_filtered zeshel_none_biencoder qa_classifier dev false 0 false
 # bash run_eval_slurm.sh 64 webqsp_filtered pretrain_none_biencoder qa_classifier dev false 0 false
 # bash run_eval_slurm.sh 64 webqsp_filtered pretrain_all_avg_biencoder qa_classifier dev false 0 false
 eval_batch_size=$1  # 64
 test_questions=$2  # webqsp_filtered/nq/graphqs_filtered
-model=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
+model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
 ner=$4  # joint/qa_classifier/ngram/single/flair
 subset=$5  # test/dev/train_only
 debug=$6  # "true"/<anything other than "true"> (does debug_cross)
@@ -29,6 +31,11 @@ qa_classifier_threshold=$7  # 0
 gpu=$8  # true/false
 
 export PYTHONPATH=.
+
+IFS=';' read -ra MODEL_PARSE <<< "${model_full}"
+model=${MODEL_PARSE[0]}
+echo $model
+echo $model_full
 
 if [ "${test_questions}" = "webqsp_filtered" ]
 then
@@ -68,8 +75,14 @@ fi
 
 if [ "${model}" = "finetuned_webqsp" ]
 then
-    biencoder_config=experiments/webqsp/biencoder_none_false_16/training_params.txt
-    biencoder_model=experiments/webqsp/biencoder_none_false_16/epoch_4/pytorch_model.bin
+    model_folder=${MODEL_PARSE[1]}  # biencoder_none_false_16_2
+    epoch=${MODEL_PARSE[2]}  # 9
+    if [[ $epoch != "" ]]
+    then
+        model_folder=${MODEL_PARSE[1]}/epoch_${epoch}
+    fi
+    biencoder_config=experiments/webqsp/${MODEL_PARSE[1]}/training_params.txt
+    biencoder_model=experiments/webqsp/${model_folder}/pytorch_model.bin
     entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
     crossencoder_config=models/crossencoder_wiki_large.json  # TODO CHANGE!!! (not fintuned yet...)
     crossencoder_model=models/crossencoder_wiki_large.bin  # TODO CHANGE!!! (not fintuned yet...)
@@ -119,7 +132,7 @@ command="python blink/main_dense.py -q ${debug} --fast \
     --biencoder_config ${biencoder_config} \
     --crossencoder_model ${crossencoder_model} \
     --crossencoder_config ${crossencoder_config} \
-    --save_preds_dir saved_preds/${test_questions}_${subset}_${model}_${ner}${qa_classifier_threshold} \
+    --save_preds_dir saved_preds/${test_questions}_${subset}_${model_full}_${ner}${qa_classifier_threshold} \
     -n ${ner} ${qa_classifier_threshold_args} \
     --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args}"
     # --no_mention_bounds_biencoder --mention_aggregation_type all_avg"

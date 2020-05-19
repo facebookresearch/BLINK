@@ -84,13 +84,19 @@ class GetContextEmbedsHead(nn.Module):
         # get embedding of [CLS] token
         # try batched_span_select?
         if self.tokens_to_aggregate == 'all':
-            (
-                embedding_ctxt,  # (batch_size, num_spans=1, max_batch_span_width, embedding_size)
-                mask,  # (batch_size, num_spans=1, max_batch_span_width)
-            ) = batched_span_select(
-                bert_output,  # (batch_size, sequence_length, embedding_size)
-                mention_idxs.unsqueeze(1),  # (batch_size, num_spans=1, 2)
-            )
+            try:
+                (
+                    embedding_ctxt,  # (batch_size, num_spans=1, max_batch_span_width, embedding_size)
+                    mask,  # (batch_size, num_spans=1, max_batch_span_width)
+                ) = batched_span_select(
+                    bert_output,  # (batch_size, sequence_length, embedding_size)
+                    mention_idxs.unsqueeze(1),  # (batch_size, num_spans=1, 2)
+                )
+            except:
+                print(bert_output)
+                print(mention_idxs)
+                import pdb
+                pdb.set_trace()
             embedding_ctxt[~mask] = 0  # 0 out masked elements
             embedding_ctxt = embedding_ctxt.squeeze(1)
             mask = mask.squeeze(1)
@@ -191,6 +197,11 @@ class BiEncoderModule(torch.nn.Module):
                         # (to consider > 1 candidate, take N largest in 1st dimension)
                         start_pos = start_logits.argmax(1)
                         end_pos = end_logits.argmax(1)
+                        # may be non-well-formed... (consider as incorrect)
+                        non_well_formed_mask = end_pos < start_pos
+                        start_pos[non_well_formed_mask] = -1
+                        end_pos[non_well_formed_mask] = -1
+
                         mention_idxs = torch.stack([start_pos, end_pos]).t()
                     else:
                         # use gold mention
@@ -200,7 +211,13 @@ class BiEncoderModule(torch.nn.Module):
                     assert gold_mention_idxs is not None
                     mention_idxs = gold_mention_idxs
 
-                embedding_ctxt = self.classification_heads['get_context_embeds'](bert_output, mention_idxs)
+                try:
+                    embedding_ctxt = self.classification_heads['get_context_embeds'](bert_output, mention_idxs)
+                except:
+                    print(token_idx_ctxt)
+                    print(gold_mention_idxs)
+                    import pdb
+                    pdb.set_trace()
 
         embedding_cands = None
         if token_idx_cands is not None:
@@ -323,10 +340,26 @@ class BiEncoderRanker(torch.nn.Module):
         token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
             cands, self.NULL_IDX
         )
-        embedding_context, _, start_logits, end_logits = self.model(
-            token_idx_cands, segment_idx_cands, mask_cands, None, None, None,
-            gold_mention_idxs=gold_mention_idxs,
-        )
+        try:
+            embedding_context, _, start_logits, end_logits = self.model(
+                token_idx_ctxt=token_idx_cands,
+                segment_idx_ctxt=segment_idx_cands, mask_ctxt=mask_cands,
+                token_idx_cands=None, segment_idx_cands=None, mask_cands=None,
+                gold_mention_idxs=gold_mention_idxs,
+            )
+        except:
+            print(token_idx_cands)
+            print(segment_idx_cands)
+            print(mask_cands)
+            print(gold_mention_idxs)
+            embedding_context, _, start_logits, end_logits = self.model(
+                token_idx_ctxt=token_idx_cands,
+                segment_idx_ctxt=segment_idx_cands, mask_ctxt=mask_cands,
+                token_idx_cands=None, segment_idx_cands=None, mask_cands=None,
+                gold_mention_idxs=gold_mention_idxs,
+            )
+            import pdb
+            pdb.set_trace()
         return embedding_context, start_logits, end_logits
 
     def encode_candidate(self, cands):
@@ -353,9 +386,13 @@ class BiEncoderRanker(torch.nn.Module):
         cand_encs=None,  # pre-computed candidate encoding.
         gold_mention_idxs=None,
     ):
-        if text_encs is None or ((
-            start_logits is None or end_logits is None
-        ) and getattr(self.model, 'do_mention_detection', self.model.module.do_mention_detection)):
+        if text_encs is None or (
+            (start_logits is None or end_logits is None) and ((
+                hasattr(self.model, 'do_mention_detection') and self.model.do_mention_detection
+            ) or (
+                hasattr(self.model, 'module') and self.model.module.do_mention_detection
+            ))
+        ):
             # Encode contexts first
             token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(
                 text_vecs, self.NULL_IDX
@@ -423,6 +460,9 @@ class BiEncoderRanker(torch.nn.Module):
             gold_mention_idxs=gold_mention_idxs,
         )
 
+        if not return_loss:
+            return scores, start_logits, end_logits
+
         span_loss = 0
         if start_logits is not None:
             N = context_input.size(0)  # batch size
@@ -430,9 +470,6 @@ class BiEncoderRanker(torch.nn.Module):
             span_loss = self.get_span_loss(
                 gold_mention_idxs[:,0].unsqueeze(-1), gold_mention_idxs[:,1].unsqueeze(-1),
                 start_logits, end_logits, N, M)
-
-        if not return_loss:
-            return scores, start_logits, end_logits
 
         bs = scores.size(0)
         # TODO modify target to *correct* label (pass in a label_input???)

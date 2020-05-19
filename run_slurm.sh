@@ -16,7 +16,8 @@ data=$1  # webqsp/zeshel/pretrain/zero_shot (ledell's model)
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none
 joint_mention_detection=$3  # "true"/false
 context_length=$4  # 16/128
-latest_epoch=$5
+load_saved_cand_encs=$5  # "true"/false
+latest_epoch=$6
 
 # for i in {0..11}
 # do
@@ -30,13 +31,13 @@ latest_epoch=$5
 # done
 
 
-for i in {0..3}
+for i in {0..11}
 do
-    start=$(( i * 15 ))00000
-    end=$(( i * 15 + 15 ))00000
+    start=$(( i * 5 ))00000
+    end=$(( i * 5 + 5 ))00000
     if [ ! -f "models/entity_encodings/${data}_${mention_agg_type}_biencoder_${joint_mention_detection}_${context_length}_${latest_epoch}/${start}_${end}.t7" ]
     then
         echo ${data} ${mention_agg_type} ${start}
-        sbatch examples/train_biencoder.sh ${data} ${mention_agg_type} predict 512 ${joint_mention_detection} ${context_length} ${start} ${end} ${latest_epoch}
+        sbatch examples/train_biencoder.sh ${data} ${mention_agg_type} predict 512 ${joint_mention_detection} ${context_length} ${load_saved_cand_encs} ${start} ${end} ${latest_epoch}
     fi
 done

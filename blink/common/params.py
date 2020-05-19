@@ -308,6 +308,12 @@ class BlinkParser(argparse.ArgumentParser):
             action="store_true",
             help="Only load the candidate encoder from saved model path",
         )
+        parser.add_argument(
+            "--adversarial_training",
+            default=False,
+            action="store_true",
+            help="Do adversarial training (only takes effect if `freeze_cand_enc` is set)",
+        )
 
     def add_eval_args(self, args=None):
         """
