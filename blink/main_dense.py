@@ -7,6 +7,7 @@
 import argparse
 import json
 import sys
+import faiss
 
 from tqdm import tqdm
 import logging
@@ -14,6 +15,7 @@ import torch
 import numpy as np
 from colorama import init
 from termcolor import colored
+import torch.nn.functional as F
 
 import blink.ner as NER
 from torch.utils.data import DataLoader, SequentialSampler, TensorDataset
@@ -506,6 +508,26 @@ def _run_biencoder(
     biencoder, dataloader, candidate_encoding, samples,
     top_k=100, device="cpu", jointly_extract_mentions=False,
 ):
+    # TODO DELETE THIS
+    cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
+    d = cand_encs_npy.shape[1]
+    nsplits = 100
+    cand_encs_flat_index = faiss.IndexFlatIP(d)
+    cand_encs_quantizer = faiss.IndexFlatIP(d)
+    assert cand_encs_quantizer.is_trained
+    cand_encs_index = faiss.IndexIVFFlat(cand_encs_quantizer, d, nsplits, faiss.METRIC_INNER_PRODUCT)
+    assert not cand_encs_index.is_trained
+    cand_encs_index.train(cand_encs_npy)  # 15s
+    assert cand_encs_index.is_trained
+    cand_encs_index.add(cand_encs_npy)  # 41s
+    cand_encs_flat_index.add(cand_encs_npy)
+    assert cand_encs_index.ntotal == cand_encs_npy.shape[0]
+    assert cand_encs_flat_index.ntotal == cand_encs_npy.shape[0]
+    cand_encs_index.nprobe = 20
+    logger.info("Built and trained FAISS index on entity encodings")
+    num_neighbors = 10
+    #'''
+
     biencoder.model.eval()
     labels = []
     context_inputs = []
@@ -524,9 +546,41 @@ def _run_biencoder(
                 cand_encs=candidate_encoding.to(device),
                 gold_mention_idxs=gold_mention_idxs,
             )
+
+            # # TODO DELETE THIS
+            # # get mention encoding
+            # embedding_context, start_logits, end_logits = biencoder.encode_context(
+            #     context_input, gold_mention_idxs=mention_idxs
+            # )
+            # # do faiss search for closest entity
+            # D, I = cand_encs_flat_index.search(embedding_context.contiguous().detach().cpu().numpy(), 1)
+            # I = I.flatten()
+            # assert np.all(I == scores.argmax(1).detach().cpu().numpy())
+            # # '''
             if jointly_extract_mentions:
                 start_pos = start_logits.argmax(1)
                 end_pos = end_logits.argmax(1)
+                # # take sum of log softmaxes
+                # # p(mention) = p(start_pos && end_pos) = p(start_pos) * p(end_pos)
+                # start_logprobs = F.log_softmax(start_logits, 1)
+                # end_logprobs = F.log_softmax(end_logits, 1)
+                # # start_pos are rows, end_pos are cols
+                # mention_scores = start_logprobs.unsqueeze(-1) + end_logprobs.unsqueeze(0)
+                # mention_sizes = torch.arange(end_logits.size(0)).unsqueeze(-1) - torch.arange(start_logits.size(0)).unsqueeze(-1)
+                # # remove invalids (startpos > endpos) and renormalize
+                # import pdb
+                # pdb.set_trace()
+                # mention_scores[mention_sizes <= 0] = -float("inf")
+                # # TODO RENORMALIZE?
+
+                # # choose mention_scores > threshold?
+                # cand_mentions = (mention_scores > 0.5)  # TODO SET THRESHOLD
+                # scores, _, _ = biencoder.score_candidate(
+                #     context_input, None,
+                #     cand_encs=candidate_encoding.to(device),
+                #     gold_mention_idxs=cand_mentions.to(device),
+                # )
+
                 mention_idxs = torch.stack([start_pos, end_pos]).t()
                 # take highest scoring mention
 
@@ -691,6 +745,9 @@ def load_models(args, logger):
     biencoder_params["path_to_model"] = args.biencoder_model
     biencoder_params["eval_batch_size"] = args.eval_batch_size
     biencoder_params["no_cuda"] = not args.use_cuda
+    if biencoder_params["no_cuda"]:
+        biencoder_params["data_parallel"] = False
+    biencoder_params["load_cand_enc_only"] = False
     # biencoder_params["mention_aggregation_type"] = args.mention_aggregation_type
     biencoder = load_biencoder(biencoder_params)
     if not args.use_cuda and type(biencoder.model).__name__ == 'DataParallel':
@@ -708,6 +765,8 @@ def load_models(args, logger):
             crossencoder_params["eval_batch_size"] = args.eval_batch_size
             crossencoder_params["path_to_model"] = args.crossencoder_model
             crossencoder_params["no_cuda"] = not args.use_cuda
+            if crossencoder_params["no_cuda"]:
+                crossencoder_params["data_parallel"] = False
         crossencoder = load_crossencoder(crossencoder_params)
         if not args.use_cuda and type(crossencoder.model).__name__ == 'DataParallel':
             crossencoder.model = crossencoder.model.module

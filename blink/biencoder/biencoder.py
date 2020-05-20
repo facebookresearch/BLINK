@@ -296,7 +296,7 @@ class BiEncoderRanker(torch.nn.Module):
         if model_path is not None:
             self.load_model(
                 model_path,
-                cand_enc_only=params.get("load_cand_enc_only", False)
+                cand_enc_only=params.get("load_cand_enc_only", False),
             )
         self.loss_type = "mml"  # TODO make this a parameter
         self.model = self.model.to(self.device)
