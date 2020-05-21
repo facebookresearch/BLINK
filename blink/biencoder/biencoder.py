@@ -98,9 +98,9 @@ class GetContextEmbedsHead(nn.Module):
                 import pdb
                 pdb.set_trace()
             embedding_ctxt[~mask] = 0  # 0 out masked elements
-            embedding_ctxt = embedding_ctxt.squeeze(1)
-            mask = mask.squeeze(1)
-            # embedding_ctxt = (batch_size, max_batch_span_width, embedding_size)
+            embedding_ctxt = embedding_ctxt.squeeze(1)  # (batch_size, max_batch_span_width, embedding_size)
+            mask = mask.squeeze(1)  # (batch_size, max_batch_span_width, embedding_size)
+            # embedding_ctxt = (batch_size, max_batch_span_width)
             if self.aggregate_method == 'avg':
                 embedding_ctxt = embedding_ctxt.sum(1) / mask.sum(1).float().unsqueeze(-1)
                 # embedding_ctxt = (batch_size, embedding_size)

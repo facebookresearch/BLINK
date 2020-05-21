@@ -19,7 +19,7 @@ import torch.nn.functional as F
 
 import blink.ner as NER
 from torch.utils.data import DataLoader, SequentialSampler, TensorDataset
-from blink.biencoder.biencoder import BiEncoderRanker, load_biencoder
+from blink.biencoder.biencoder import BiEncoderRanker, load_biencoder, to_bert_input
 from blink.crossencoder.crossencoder import CrossEncoderRanker, load_crossencoder
 from blink.biencoder.data_process import (
     process_mention_data,
@@ -206,6 +206,7 @@ def get_mention_bound_candidates(
     do_ner, record, new_record,
     saved_ngrams=None, ner_model=None, max_mention_len=4,
     ner_errors=0, sample_idx=0, qa_classifier_saved=None,
+    biencoder=None,
 ):
     if do_ner == "ngram":
         if record["utterance"] not in saved_ngrams:
@@ -320,7 +321,7 @@ def __load_test(
     test_filename, kb2id, logger, args,
     qa_data=False, id2kb=None, title2id=None,
     do_ner="none", use_ngram_extractor=False, max_mention_len=4,
-    debug=False, main_entity_only=False,
+    debug=False, main_entity_only=False, biencoder=None,
 ):
     test_samples = []
     sample_to_all_context_inputs = []  # if multiple mentions found for an example, will have multiple inputs
@@ -426,6 +427,7 @@ def __load_test(
                     saved_ngrams=saved_ngrams, ner_model=ner_model,
                     max_mention_len=max_mention_len, ner_errors=ner_errors,
                     sample_idx=sample_idx, qa_classifier_saved=qa_classifier_saved,
+                    biencoder=biencoder,
                 )
                 if sample_idx_list is not None:
                     sample_to_all_context_inputs.append(sample_idx_list)
@@ -470,6 +472,7 @@ def __load_test(
 def _get_test_samples(
     test_filename, test_entities_path, title2id, kb2id, id2kb, logger,
     qa_data=False, do_ner="none", debug=False, main_entity_only=False, do_map_test_entities=True,
+    biencoder=None,
 ):
     # TODO GET CORRECT IDS
     # if debug:
@@ -480,6 +483,7 @@ def _get_test_samples(
         test_filename, kb2id, logger, args,
         qa_data=qa_data, id2kb=id2kb, title2id=title2id,
         do_ner=do_ner, debug=debug, main_entity_only=main_entity_only,
+        biencoder=biencoder,
     )
     return test_samples, kb2id, id2kb, num_unk, sample_to_all_context_inputs
 
@@ -507,25 +511,26 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
 def _run_biencoder(
     biencoder, dataloader, candidate_encoding, samples,
     top_k=100, device="cpu", jointly_extract_mentions=False,
+    sample_to_all_context_inputs=None, num_mentions=10,  # TODO don't hardcode
 ):
     # TODO DELETE THIS
-    cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
-    d = cand_encs_npy.shape[1]
-    nsplits = 100
-    cand_encs_flat_index = faiss.IndexFlatIP(d)
-    cand_encs_quantizer = faiss.IndexFlatIP(d)
-    assert cand_encs_quantizer.is_trained
-    cand_encs_index = faiss.IndexIVFFlat(cand_encs_quantizer, d, nsplits, faiss.METRIC_INNER_PRODUCT)
-    assert not cand_encs_index.is_trained
-    cand_encs_index.train(cand_encs_npy)  # 15s
-    assert cand_encs_index.is_trained
-    cand_encs_index.add(cand_encs_npy)  # 41s
-    cand_encs_flat_index.add(cand_encs_npy)
-    assert cand_encs_index.ntotal == cand_encs_npy.shape[0]
-    assert cand_encs_flat_index.ntotal == cand_encs_npy.shape[0]
-    cand_encs_index.nprobe = 20
-    logger.info("Built and trained FAISS index on entity encodings")
-    num_neighbors = 10
+    # cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
+    # d = cand_encs_npy.shape[1]
+    # nsplits = 100
+    # cand_encs_flat_index = faiss.IndexFlatIP(d)
+    # cand_encs_quantizer = faiss.IndexFlatIP(d)
+    # assert cand_encs_quantizer.is_trained
+    # cand_encs_index = faiss.IndexIVFFlat(cand_encs_quantizer, d, nsplits, faiss.METRIC_INNER_PRODUCT)
+    # assert not cand_encs_index.is_trained
+    # cand_encs_index.train(cand_encs_npy)  # 15s
+    # assert cand_encs_index.is_trained
+    # cand_encs_index.add(cand_encs_npy)  # 41s
+    # cand_encs_flat_index.add(cand_encs_npy)
+    # assert cand_encs_index.ntotal == cand_encs_npy.shape[0]
+    # assert cand_encs_flat_index.ntotal == cand_encs_npy.shape[0]
+    # cand_encs_index.nprobe = 20
+    # logger.info("Built and trained FAISS index on entity encodings")
+    # num_neighbors = 10
     #'''
 
     biencoder.model.eval()
@@ -533,20 +538,16 @@ def _run_biencoder(
     context_inputs = []
     nns = []
     dists = []
-    idx = 0
+    sample_idx = 0
+    ctxt_idx = 0
+    new_samples = samples
+    new_sample_to_all_context_inputs = sample_to_all_context_inputs
+    if jointly_extract_mentions:
+        new_samples = []
+        new_sample_to_all_context_inputs = []
     for step, batch in enumerate(tqdm(dataloader)):
         context_input, _, label_ids, mention_idxs = batch
         with torch.no_grad():
-            if jointly_extract_mentions:
-                gold_mention_idxs = None
-            else:
-                gold_mention_idxs = mention_idxs.to(device)
-            scores, start_logits, end_logits = biencoder.score_candidate(
-                context_input, None,
-                cand_encs=candidate_encoding.to(device),
-                gold_mention_idxs=gold_mention_idxs,
-            )
-
             # # TODO DELETE THIS
             # # get mention encoding
             # embedding_context, start_logits, end_logits = biencoder.encode_context(
@@ -557,41 +558,100 @@ def _run_biencoder(
             # I = I.flatten()
             # assert np.all(I == scores.argmax(1).detach().cpu().numpy())
             # # '''
-            if jointly_extract_mentions:
-                start_pos = start_logits.argmax(1)
-                end_pos = end_logits.argmax(1)
-                # # take sum of log softmaxes
-                # # p(mention) = p(start_pos && end_pos) = p(start_pos) * p(end_pos)
-                # start_logprobs = F.log_softmax(start_logits, 1)
-                # end_logprobs = F.log_softmax(end_logits, 1)
-                # # start_pos are rows, end_pos are cols
-                # mention_scores = start_logprobs.unsqueeze(-1) + end_logprobs.unsqueeze(0)
-                # mention_sizes = torch.arange(end_logits.size(0)).unsqueeze(-1) - torch.arange(start_logits.size(0)).unsqueeze(-1)
-                # # remove invalids (startpos > endpos) and renormalize
-                # import pdb
-                # pdb.set_trace()
-                # mention_scores[mention_sizes <= 0] = -float("inf")
-                # # TODO RENORMALIZE?
 
-                # # choose mention_scores > threshold?
-                # cand_mentions = (mention_scores > 0.5)  # TODO SET THRESHOLD
-                # scores, _, _ = biencoder.score_candidate(
-                #     context_input, None,
-                #     cand_encs=candidate_encoding.to(device),
-                #     gold_mention_idxs=cand_mentions.to(device),
-                # )
+            if not jointly_extract_mentions:
+                scores, start_logits, end_logits = biencoder.score_candidate(
+                    context_input, None,
+                    cand_encs=candidate_encoding.to(device),
+                    gold_mention_idxs=mention_idxs.to(device),
+                )
+            else:
+                token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
+                context_encoding, _, _ = biencoder.model.context_encoder.bert_model(
+                    token_idx_ctxt, segment_idx_ctxt, mask_ctxt,  # what is segment IDs?
+                )
+                start_logits, end_logits = biencoder.model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
 
-                mention_idxs = torch.stack([start_pos, end_pos]).t()
+                # take sum of log softmaxes
+                # p(mention) = p(start_pos && end_pos) = p(start_pos) * p(end_pos)
+                start_logprobs = F.log_softmax(start_logits, 1)
+                end_logprobs = F.log_softmax(end_logits, 1)
+                # DIM: (bs, starts, ends)
+                mention_scores = start_logprobs.unsqueeze(-1) + end_logprobs.unsqueeze(1)
+                # DIM: (starts, ends, 2) -- tuples of [start_idx, end_idx]
+                mention_bounds = torch.stack([
+                    # torch.arange(mention_scores.size(0)).unsqueeze(-1).unsqueeze(-1).expand_as(mention_scores),  # index in batch
+                    torch.arange(start_logits.size(1)).unsqueeze(-1).expand_as(mention_scores[0]),  # start idxs
+                    torch.arange(end_logits.size(1)).unsqueeze(0).expand_as(mention_scores[0]),  # end idxs
+                ], dim=-1)
+                # DIM: (starts, ends)
+                mention_sizes = mention_bounds[:,:,1] - mention_bounds[:,:,0]
+                # DIM: (bs, ends)
+                seq_paddings = (token_idx_ctxt == biencoder.NULL_IDX)
+
+                # Remove invalids (startpos > endpos, endpos > seqlen) and renormalize
+                # DIM: (bs, starts, ends)
+                valid_mask = (mention_sizes.unsqueeze(0) > 0) & ~seq_paddings.unsqueeze(1)
+                # DIM: (bs, starts, ends)
+                mention_scores[~valid_mask] = -float("inf")
+                # DIM: (bs, starts * ends)
+                mention_scores = mention_scores.view(mention_scores.size(0), -1)
+                mention_scores = F.log_softmax(mention_scores, dim=1)
+                # DIM: (bs, starts * ends, 2)
+                mention_bounds = mention_bounds.unsqueeze(0).expand(valid_mask.size(0), valid_mask.size(1), valid_mask.size(2), 2)
+                mention_bounds = mention_bounds.view(mention_bounds.size(0), -1, 2)
+
+                # get top K mentions
+                # DIM (bsz, K)
+                mention_scores[(~valid_mask).view(valid_mask.size(0), -1)] = -float("inf")
+                topK_mention_scores, topK_mention_idxs = mention_scores.topk(num_mentions, dim=1, sorted=True)
+                torch.gather(valid_mask.view(valid_mask.size(0), -1), 1, topK_mention_idxs)
+                # DIM (bsz, K, 2)
+                topK_mention_bounds = torch.stack([torch.gather(mention_bounds[:,:,0], 1, topK_mention_idxs), torch.gather(mention_bounds[:,:,1], 1, topK_mention_idxs)], dim=-1)
+                # DIM (bsz * K, max_seqlen, embed_size) --> dim0 = [i0, ...(xK)..., i0, i1, ...(xK)..., i1, etc.]
+                context_encoding = context_encoding.unsqueeze(1).expand(
+                    context_encoding.size(0), topK_mention_idxs.size(1),
+                    context_encoding.size(1), context_encoding.size(2),
+                )
+                context_encoding = context_encoding.reshape(-1, context_encoding.size(2), context_encoding.size(3))
+                # DIM (bsz * K, 2) --> dim0 = [i0m1,..., i0mK, i1m1, ..., i1mK, etc.]
+                topK_mention_bounds_flattened = topK_mention_bounds.view(-1, 2)
+                # DIM (bsz * K)
+                topK_mention_scores_flattened = topK_mention_scores.flatten()
                 # take highest scoring mention
+                embedding_ctxt = biencoder.model.classification_heads['get_context_embeds'](
+                    context_encoding, topK_mention_bounds_flattened)
+                # DIM (bsz * K, num_candidates)
+                scores = embedding_ctxt.mm(candidate_encoding.to(device).t())
+                # log p(entity) = log [p(entity|mention bounds) * p(mention bounds)] = log p(e|mb) + log p(mb)
+                scores = F.log_softmax(scores, dim=-1) + topK_mention_scores_flattened.unsqueeze(-1)
+
+                # mention_idxs = mention_idxs.view(topK_mention_bounds.size(0), topK_mention_bounds.size(1), 2)
+                # assert (mention_idxs == topK_mention_bounds).all()
+                # scores = scores.view(topK_mention_bounds.size(0), topK_mention_bounds.size(1), -1)
+
+                # expand labels
+                label_ids = label_ids.expand(topK_mention_bounds.size(0), topK_mention_bounds.size(1)).reshape(-1, 1)
 
         if jointly_extract_mentions:
-            for i, instance in enumerate(mention_idxs):
-                samples[idx]["context_left"] = biencoder.tokenizer.decode(context_input[i].tolist()[:mention_idxs[i,0]])
-                samples[idx]["context_left"] = samples[idx]["context_left"][len('[CLS] '):].strip() + " "  # disrgard CLS token and add space
-                samples[idx]["context_right"] = biencoder.tokenizer.decode(context_input[i].tolist()[mention_idxs[i,1]:])
-                samples[idx]["context_right"] = " " + samples[idx]["context_right"][0].strip()  # disregard padding and add space
-                samples[idx]["mention"] = biencoder.tokenizer.decode(context_input[i].tolist()[mention_idxs[i,0]:mention_idxs[i,1]])
-                idx += 1
+            for i, instance in enumerate(topK_mention_bounds):
+                new_sample_to_all_context_inputs.append([])
+                for j, mention_bound in enumerate(topK_mention_bounds[i]):
+                    new_sample_to_all_context_inputs[sample_idx].append(ctxt_idx)
+                    context_left = biencoder.tokenizer.decode(context_input[i].tolist()[:mention_bound[0]])
+                    context_left = context_left[len('[CLS] '):].strip() + " "  # disrgard CLS token and add space
+                    context_right = biencoder.tokenizer.decode(context_input[i].tolist()[mention_bound[1] + 1:])  # mention bound is inclusive
+                    context_right = " " + context_right[0].strip()  # disregard padding and add space
+                    new_samples.append({
+                        "context_left": context_left,
+                        "context_right": context_right,
+                        "mention": biencoder.tokenizer.decode(context_input[i].tolist()[mention_bound[0]:mention_bound[1] + 1]),
+                    })
+                    for key in samples[sample_idx]:
+                        if key != "context_left" and key != "context_right" and key != "mention":
+                            new_samples[ctxt_idx][key] = samples[sample_idx][key]
+                    ctxt_idx += 1
+                sample_idx += 1
 
         dist, indices = scores.topk(top_k)
         labels.extend(label_ids.data.numpy())
@@ -601,8 +661,9 @@ def _run_biencoder(
         sys.stdout.write("{}/{} \r".format(step, len(dataloader)))
         sys.stdout.flush()
     if jointly_extract_mentions:
-        assert idx == len(samples)
-    return labels, nns, dists, samples
+        assert sample_idx == len(new_sample_to_all_context_inputs)
+        assert ctxt_idx == len(new_samples)
+    return labels, nns, dists, new_samples, new_sample_to_all_context_inputs
 
 
 def _process_crossencoder_dataloader(context_input, label_input, crossencoder_params):
@@ -887,7 +948,8 @@ def run(
             samples, kb2id, id2kb, num_unk, sample_to_all_context_inputs = _get_test_samples(
                 args.test_mentions, args.test_entities, title2id, kb2id, id2kb, logger,
                 qa_data=True, do_ner=args.do_ner, debug=args.debug_biencoder,
-                main_entity_only=args.eval_main_entity, do_map_test_entities=(len(kb2id) == 0)
+                main_entity_only=args.eval_main_entity, do_map_test_entities=(len(kb2id) == 0),
+                biencoder=biencoder,
             )
             logger.info("Finished loading test samples")
 
@@ -901,7 +963,8 @@ def run(
 
             # Load test mentions
             samples, _, _, _, sample_to_all_context_inputs = _get_test_samples(
-                args.test_mentions, args.test_entities, title2id, kb2id, id2kb, logger
+                args.test_mentions, args.test_entities, title2id, kb2id, id2kb, logger,
+                biencoder=biencoder,
             )
             stopping_condition = True
 
@@ -918,10 +981,11 @@ def run(
             logger.info("Running biencoder...")
             top_k = 100
 
-            labels, nns, dists, samples = _run_biencoder(
+            labels, nns, dists, samples, sample_to_all_context_inputs = _run_biencoder(
                 biencoder, dataloader, candidate_encoding, samples=samples,
                 top_k=top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
                 jointly_extract_mentions=(args.do_ner == "joint"),
+                sample_to_all_context_inputs=sample_to_all_context_inputs,
             )
             logger.info("Finished running biencoder")
             
@@ -933,8 +997,10 @@ def run(
             labels, nns, dists = _retrieve_from_saved_biencoder_outs(args.save_preds_dir)
             if args.do_ner != "joint" and not os.path.exists(os.path.join(args.save_preds_dir, "samples.json")):
                 json.dump(samples, open(os.path.join(args.save_preds_dir, "samples.json"), "w"))  # TODO UNCOMMENT
+                json.dump(sample_to_all_context_inputs, open(os.path.join(args.save_preds_dir, "sample_to_all_context_inputs.json"), "w"))
             else:
                 samples = json.load(open(os.path.join(args.save_preds_dir, "samples.json")))
+                sample_to_all_context_inputs = json.load(open(os.path.join(args.save_preds_dir, "sample_to_all_context_inputs.json")))
 
         logger.info("Merging inputs...")
         samples_merged, labels_merged, nns_merged, dists_merged, entity_mention_bounds_idx, _ = _combine_same_inputs_diff_mention_bounds(
