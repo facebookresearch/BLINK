@@ -986,6 +986,7 @@ def run(
                 top_k=top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
                 jointly_extract_mentions=(args.do_ner == "joint"),
                 sample_to_all_context_inputs=sample_to_all_context_inputs,
+                num_mentions=int(args.qa_classifier_threshold) if args.do_ner == "joint" else None,
             )
             logger.info("Finished running biencoder")
             
@@ -998,7 +999,7 @@ def run(
             if args.do_ner != "joint" and not os.path.exists(os.path.join(args.save_preds_dir, "samples.json")):
                 json.dump(samples, open(os.path.join(args.save_preds_dir, "samples.json"), "w"))  # TODO UNCOMMENT
                 json.dump(sample_to_all_context_inputs, open(os.path.join(args.save_preds_dir, "sample_to_all_context_inputs.json"), "w"))
-            else:
+            elif args.do_ner == "joint":
                 samples = json.load(open(os.path.join(args.save_preds_dir, "samples.json")))
                 sample_to_all_context_inputs = json.load(open(os.path.join(args.save_preds_dir, "sample_to_all_context_inputs.json")))
 
@@ -1096,20 +1097,40 @@ def run(
                         num_total += 1
                     else:
                         if "all_gold_entities" in sample:
-                            # get *all* entities, removing duplicates
+                            # get top for each mention bound, w/out duplicates
+                            # TOP-1
                             all_pred_entities = pred_kbids_sorted[:1]
                             e_mention_bounds = entity_mention_bounds_idx[i][:1].tolist()
-                            pred_triples = [(
-                                # sample['all_gold_entities'][i],
-                                all_pred_entities[i], # TODO REVERT THIS
-                                len(sample['context_left'][e_mention_bounds[i]]), 
-                                len(sample['context_left'][e_mention_bounds[i]]) + len(sample['mention'][e_mention_bounds[i]]),
-                            ) for i in range(len(all_pred_entities))]
+
+                            # 1 PER BOUND
+                            e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx[i] == j)[0][0] for j in range(len(sample['context_left']))]
+                            # sort bounds
+                            e_mention_bounds_idxs.sort()
+                            all_pred_entities = []
+                            e_mention_bounds = []
+                            try:
+                                for bound_idx in e_mention_bounds_idxs:
+                                    if pred_kbids_sorted[bound_idx] not in all_pred_entities:
+                                        all_pred_entities.append(pred_kbids_sorted[bound_idx])
+                                        e_mention_bounds.append(entity_mention_bounds_idx[i][bound_idx])
+                            except:
+                                import pdb
+                                pdb.set_trace()
+                            try:
+                                pred_triples = [(
+                                    # sample['all_gold_entities'][i],
+                                    all_pred_entities[j], # TODO REVERT THIS
+                                    len(sample['context_left'][e_mention_bounds[j]]), 
+                                    len(sample['context_left'][e_mention_bounds[j]]) + len(sample['mention'][e_mention_bounds[j]]),
+                                ) for j in range(len(all_pred_entities))]
+                            except:
+                                import pdb
+                                pdb.set_trace()
                             gold_triples = [(
-                                sample['all_gold_entities'][i],
-                                sample['all_gold_entities_pos'][i][0], 
-                                sample['all_gold_entities_pos'][i][1],
-                            ) for i in range(len(sample['all_gold_entities']))]
+                                sample['all_gold_entities'][j],
+                                sample['all_gold_entities_pos'][j][0], 
+                                sample['all_gold_entities_pos'][j][1],
+                            ) for j in range(len(sample['all_gold_entities']))]
                             num_correct += entity_linking_tp_with_overlap(gold_triples, pred_triples)
                             num_predicted += len(all_pred_entities)
                             num_gold += len(sample["all_gold_entities"])
@@ -1123,7 +1144,9 @@ def run(
                         # "id": e_id,
                         # "title": e_title,
                         # "text": e_text,
-                        "all_pred_KBids": [id2kb.get(e_id, "") for e_id in entity_list],
+                        "pred_triples": pred_triples,
+                        "gold_triples": gold_triples,
+                        "sorted_pred_KBids": [id2kb.get(e_id, "") for e_id in entity_list],
                         "input_mention_bounds": input,
                         "gold_mention_bounds": gold_mention_bounds,
                         "gold_KBid": sample['label'],

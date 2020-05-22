@@ -62,6 +62,11 @@ fi
 if [ "${ner}" = "qa_classifier" ]
 then
     qa_classifier_threshold_args="--qa_classifier_threshold ${qa_classifier_threshold}"
+    echo $qa_classifier_threshold_args
+elif [ "${ner}" = "joint" ]
+then
+    qa_classifier_threshold_args="--qa_classifier_threshold ${qa_classifier_threshold}"
+    echo $qa_classifier_threshold_args
 else
     qa_classifier_threshold_args=""
 fi
