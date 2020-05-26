@@ -44,7 +44,8 @@ np.random.seed(1234)  # reproducible for FAISS indexer
 # for a batch of size B, the labels from the batch are used as label candidates
 # B is controlled by the parameter eval_batch_size
 def evaluate(
-    reranker, eval_dataloader, params, device, logger, cand_encs=None, faiss_index=None,
+    reranker, eval_dataloader, params, device, logger,
+    cand_encs=None, faiss_index=None, joint_mention_detection=True,
 ):
     reranker.model.eval()
     if params["silent"]:
@@ -75,11 +76,11 @@ def evaluate(
         
         with torch.no_grad():
             # evaluate with joint mention detection
-            if (
+            if ((
                 hasattr(reranker.model, 'do_mention_detection') and reranker.model.do_mention_detection
             ) or (
                 hasattr(reranker.model, 'module') and reranker.model.module.do_mention_detection
-            ):
+            )) and joint_mention_detection:
                 mention_idxs = None
             else:
                 mention_idxs = batch[-2]
@@ -312,6 +313,14 @@ def main(params):
         reranker, valid_dataloader, params,
         cand_encs=cand_encs, device=device,
         logger=logger, faiss_index=cand_encs_flat_index,
+        joint_mention_detection=True,
+    )
+    logger.info("Non-end2end")
+    results = evaluate(
+        reranker, valid_dataloader, params,
+        cand_encs=cand_encs, device=device,
+        logger=logger, faiss_index=cand_encs_flat_index,
+        joint_mention_detection=False,
     )
 
     number_of_samples_per_dataset = {}
@@ -396,7 +405,6 @@ def main(params):
             mention_logits = None
             mention_bounds = None
             if params["adversarial_training"]:
-                # TODO CHECK ADVERSARIES
                 cand_encs_index.nprobe = 20
                 assert cand_encs is not None and label_ids is not None  # due to params["freeze_cand_enc"] being set
                 # TODO GET CLOSEST N CANDIDATES HERE (AND APPROPRIATE LABELS)...
@@ -452,7 +460,7 @@ def main(params):
                 neg_cand_encs_input = cand_encs[neg_cand_encs_input_idxs]
                 # (bs * num_negatives - invalid_negs, num_spans, embed_size)
                 neg_mention_idx_mask = mention_idx_mask[neg_example_idx]
-                n[~neg_mention_idx_mask] = 0
+                neg_cand_encs_input[~neg_mention_idx_mask] = 0
 
                 # create input tensors (concat [pos examples, neg examples])
                 # (bs + bs * num_negatives, num_spans, embed_size)
@@ -559,6 +567,13 @@ def main(params):
             reranker, valid_dataloader, params,
             cand_encs=cand_encs, device=device,
             logger=logger, faiss_index=cand_encs_flat_index,
+        )
+        logger.info("Valid data evaluation -- non-end2end")
+        results = evaluate(
+            reranker, valid_dataloader, params,
+            cand_encs=cand_encs, device=device,
+            logger=logger, faiss_index=cand_encs_flat_index,
+            joint_mention_detection=False,
         )
         logger.info("Train data evaluation")
         results = evaluate(

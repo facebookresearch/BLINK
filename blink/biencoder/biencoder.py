@@ -48,9 +48,18 @@ class MentionScoresHead(nn.Module):
         super(MentionScoresHead, self).__init__()
         self.scoring_method = scoring_method
         if self.scoring_method == "qa":
+            # self.attention_scorer = nn.Sequential(
+            #     nn.Linear(bert_output_dim, bert_output_dim),
+            #     nn.ReLU(),
+            #     nn.Dropout(0.1),
+            #     nn.Linear(bert_output_dim, 1),
+            # )
             self.bound_classifier = nn.Sequential(
                 nn.Linear(bert_output_dim, 2),
-                nn.LogSoftmax(),
+                # nn.ReLU(),
+                # nn.Dropout(0.1),
+                # nn.Linear(bert_output_dim * 2, 1),
+                nn.LogSigmoid(),
             )
         elif self.scoring_method == "BIO":
             # TODO MLP
@@ -59,14 +68,14 @@ class MentionScoresHead(nn.Module):
             self.bound_classifier = nn.Sequential(
                 nn.Linear(bert_output_dim, bert_output_dim),
                 nn.ReLU(),
-                nn.Dropout(0.1), 
+                nn.Dropout(0.1),
                 nn.Linear(bert_output_dim, bert_output_dim),
             )
         else:
             raise NotImplementedError()
 
     def forward(self, bert_output, mask_ctxt):
-        # (bs, seqlen, 4)
+        # (bs, seqlen, 3)
         logits = self.bound_classifier(bert_output)
         if self.scoring_method == "qa":
             # (bs, seqlen, 1); (bs, seqlen, 1)
@@ -103,6 +112,50 @@ class MentionScoresHead(nn.Module):
             # # DIM: (bs, starts * ends, 2)
             mention_bounds = mention_bounds.view(-1, 2)
             mention_bounds = mention_bounds.unsqueeze(0).expand(mention_scores.size(0), mention_scores.size(1), 2)
+
+            # # (bs, seqlen, 1)
+            # # attentive_scores = self.attention_scorer(bert_output)
+            # # (bs, seqlen, 1); (bs, seqlen, 1); (bs, seqlen, 1)
+            # start_logprobs, end_logprobs, mention_logprobs = logits.split(1, dim=-1)
+            # # (bs, seqlen)
+            # start_logprobs = start_logprobs.squeeze(-1)
+            # end_logprobs = end_logprobs.squeeze(-1)
+            # mention_logprobs = mention_logprobs.squeeze(-1)
+            # # impossible to choose masked tokens as starts/ends of spans
+            # start_logprobs[~mask_ctxt] = -float("Inf")
+            # end_logprobs[~mask_ctxt] = -float("Inf")
+
+            # # take sum of log softmaxes:
+            # # log p(mention) = log p(start_pos && end_pos) = log p(start_pos) + log p(end_pos)
+            # # DIM: (bs, starts, ends)
+            # mention_scores = start_logprobs.unsqueeze(2) + end_logprobs.unsqueeze(1)
+
+            # # DIM: (starts, ends, 2) -- tuples of [start_idx, end_idx]
+            # mention_bounds = torch.stack([
+            #     # torch.arange(mention_scores.size(0)).unsqueeze(-1).unsqueeze(-1).expand_as(mention_scores),  # index in batch
+            #     torch.arange(attentive_scores.size(1)).unsqueeze(-1).expand(attentive_scores.size(1), attentive_scores.size(1)),  # start idxs
+            #     torch.arange(attentive_scores.size(1)).unsqueeze(0).expand(attentive_scores.size(1), attentive_scores.size(1)),  # end idxs
+            # ], dim=-1).to(mask_ctxt.device)
+            # # DIM: (starts, ends)
+            # mention_sizes = mention_bounds[:,:,1] - mention_bounds[:,:,0]
+            # # DIM (num_valid_mentions, 2)
+            # mention_bounds = mention_bounds[mention_sizes > 0]
+            # # DIM: (bs, num_valid_mentions, 2)
+            # mention_bounds = mention_bounds.unsqueeze(0).expand(attentive_scores.size(0), mention_bounds.size(0), 2)
+
+            # # # DIM: (bs, starts, ends)
+            # # mention_scores[~valid_mask] = -float("inf")  # invalids have logprob=-inf (p=0)
+            # # DIM: (bs, num_valid_mentions, 2)
+            # mention_scores = torch.cat([torch.gather(attentive_scores, 1, mention_bounds[:,:,:1]), torch.gather(attentive_scores, 1, mention_bounds[:,:,1:])], dim=-1)
+            # mention_scores = mention_scores.view(mention_scores.size(0), -1)
+
+            # # Remove invalids (startpos > endpos, endpos > seqlen) and renormalize
+            # # DIM: (bs, starts, ends)
+            # valid_mask = (mention_sizes.unsqueeze(0) > 0) & mask_ctxt.unsqueeze(1)
+            # mention_scores[valid_mask] = -float("inf")
+            # # mention_scores = F.log_softmax(mention_scores, dim=1)
+            # # # DIM: (bs, num_valid_mentions, 2)
+            # # mention_bounds = mention_bounds[valid_mask]
         elif self.scoring_method == "BIO":
             # impossible to choose masked tokens as starts/ends of spans
             # TODO IMPLEMENT
@@ -287,7 +340,7 @@ class BiEncoderModule(torch.nn.Module):
                         # ))
 
                         # (all_pred_mentions_in_batch, 2) of form: [example idx in batch, idx of mention (in starts * ends)]
-                        mention_pos = (mention_logits >= topK_threshold).nonzero()
+                        mention_pos = (F.sigmoid(mention_logits) >= topK_threshold).nonzero()
                         # reshape back to (bs, num_pred_mentions) mask
                         mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
                         mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1

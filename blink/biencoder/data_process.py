@@ -116,9 +116,23 @@ def get_context_representation_multiple_mentions(
     ent_start_token=ENT_START_TAG,
     ent_end_token=ENT_END_TAG,
 ):
-    mention_tokens = []
     all_mentions = sample[mention_key]
+    all_context_lefts = sample[context_key + "_left"]
+    all_context_rights = sample[context_key + "_right"]
 
+    if len(all_mentions[0]) == 0 and len(all_context_lefts[0]) == 0 and len(all_context_rights[0]) == 0:  # passed in empty string
+        context_tokens = ["[CLS]", "[SEP]"]
+        input_ids = tokenizer.convert_tokens_to_ids(context_tokens)
+        padding = [0] * (max_seq_length - len(input_ids))
+        input_ids += padding
+        assert len(input_ids) == max_seq_length
+        return {
+            "tokens": context_tokens,
+            "ids": input_ids,
+            "mention_idxs": [],
+        }
+
+    mention_tokens = []
     for mention in all_mentions:
         if mention and len(mention) > 0:
             mention_token = tokenizer.tokenize(mention)
@@ -126,9 +140,6 @@ def get_context_representation_multiple_mentions(
                 # -2 for [CLS] and [SEP]
                 mention_token = mention_token[:max_seq_length - 2]
             mention_tokens.append(mention_token)
-
-    all_context_lefts = sample[context_key + "_left"]
-    all_context_rights = sample[context_key + "_right"]
     mention_idxs = []
 
     assert len(all_context_lefts) == len(all_context_rights)

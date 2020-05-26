@@ -562,7 +562,7 @@ def _run_biencoder(
             if not jointly_extract_mentions:
                 import pdb
                 pdb.set_trace()
-                gold_mention_idx_mask = torch.ones(mention_idxs.size(), dtype=torch.bool)
+                gold_mention_idx_mask = torch.ones(mention_idxs.size()[:2], dtype=torch.bool)
                 scores, mention_logits, mention_bounds = biencoder.score_candidate(
                     context_input, None,
                     cand_encs=candidate_encoding.to(device),
@@ -570,17 +570,19 @@ def _run_biencoder(
                     gold_mention_idx_mask=gold_mention_idx_mask.to(device),
                 )
             else:
+                import pdb
+                pdb.set_trace()
                 token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
                 context_encoding, _, _ = biencoder.model.context_encoder.bert_model(
                     token_idx_ctxt, segment_idx_ctxt, mask_ctxt,  # what is segment IDs?
                 )
                 mention_scores, mention_bounds = biencoder.model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
 
-                # get top K mentions
-                # DIM (bsz, K)
-                mention_scores[(~valid_mask).view(valid_mask.size(0), -1)] = -float("inf")
+                # # get top K mentions
+                # # DIM (bsz, K)
+                # mention_scores[(~valid_mask).view(valid_mask.size(0), -1)] = -float("inf")
                 topK_mention_scores, topK_mention_idxs = mention_scores.topk(num_mentions, dim=1, sorted=True)
-                torch.gather(valid_mask.view(valid_mask.size(0), -1), 1, topK_mention_idxs)
+                # torch.gather(valid_mask.view(valid_mask.size(0), -1), 1, topK_mention_idxs)
                 # DIM (bsz, K, 2)
                 topK_mention_bounds = torch.stack([torch.gather(mention_bounds[:,:,0], 1, topK_mention_idxs), torch.gather(mention_bounds[:,:,1], 1, topK_mention_idxs)], dim=-1)
                 # DIM (bsz * K, max_seqlen, embed_size) --> dim0 = [i0, ...(xK)..., i0, i1, ...(xK)..., i1, etc.]

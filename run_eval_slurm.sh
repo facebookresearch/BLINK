@@ -23,7 +23,7 @@
 # bash run_eval_slurm.sh 64 webqsp_filtered pretrain_all_avg_biencoder qa_classifier dev false 0 false
 eval_batch_size=$1  # 64
 test_questions=$2  # webqsp_filtered/nq/graphqs_filtered
-model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
+model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
 ner=$4  # joint/qa_classifier/ngram/single/flair
 subset=$5  # test/dev/train_only
 debug=$6  # "true"/<anything other than "true"> (does debug_cross)
@@ -78,7 +78,7 @@ else
     cuda_args="--use_cuda"
 fi
 
-if [ "${model}" = "finetuned_webqsp" ] || [ "${model}" = "pretrain" ]
+if [ "${model}" = "finetuned_webqsp" ] || [ "${model}" = "pretrain" ] || [ "${model}" = "finetuned_webqsp_all_ents" ]
 then
     model_folder=${MODEL_PARSE[1]}  # biencoder_none_false_16_2
     epoch=${MODEL_PARSE[2]}  # 9
@@ -89,6 +89,9 @@ then
     if [ "${model}" = "finetuned_webqsp" ]
     then
         dir="webqsp"
+    elif [ "${model}" = "finetuned_webqsp_all_ents" ]
+    then
+        dir="webqsp_all_ents"
     else
         dir="pretrain"
     fi
