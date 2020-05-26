@@ -23,7 +23,7 @@ from blink.biencoder.biencoder import BiEncoderRanker, load_biencoder, to_bert_i
 from blink.crossencoder.crossencoder import CrossEncoderRanker, load_crossencoder
 from blink.biencoder.data_process import (
     process_mention_data,
-    get_context_representation,
+    get_context_representation_single_mention,
     get_candidate_representation,
 )
 import blink.candidate_ranking.utils as utils
@@ -546,7 +546,7 @@ def _run_biencoder(
         new_samples = []
         new_sample_to_all_context_inputs = []
     for step, batch in enumerate(tqdm(dataloader)):
-        context_input, _, label_ids, mention_idxs = batch
+        context_input, _, label_ids, mention_idxs, mention_idxs_mask = batch
         with torch.no_grad():
             # # TODO DELETE THIS
             # # get mention encoding
@@ -1034,10 +1034,10 @@ def run(
                     sample = samples_merged[i]
                     distances = dists_merged[i]
                     input = ["{}[{}]{}".format(
-                        sample['context_left'][i],
-                        sample['mention'][i], 
-                        sample['context_right'][i],
-                    ) for i in range(len(sample['context_left']))]
+                        sample['context_left'][j],
+                        sample['mention'][j], 
+                        sample['context_right'][j],
+                    ) for j in range(len(sample['context_left']))]
                     if 'gold_context_left' in sample:
                         gold_mention_bounds = "{}[{}]{}".format(sample['gold_context_left'],
                             sample['gold_mention'], sample['gold_context_right'])
@@ -1076,6 +1076,11 @@ def run(
                             # TOP-1
                             all_pred_entities = pred_kbids_sorted[:1]
                             e_mention_bounds = entity_mention_bounds_idx[i][:1].tolist()
+
+                            # # THRESHOLDING TODO
+                            # top_indices = (distances > -2)
+                            # all_pred_entities = pred_kbids_sorted[distances > -2]
+                            # e_mention_bounds = entity_mention_bounds_idx[i][:1].tolist()
 
                             # 1 PER BOUND
                             e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx[i] == j)[0][0] for j in range(len(sample['context_left']))]

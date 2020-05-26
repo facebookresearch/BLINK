@@ -88,18 +88,22 @@ def evaluate(
             if params["freeze_cand_enc"]:
                 # get mention encoding
                 embedding_context, mention_logits, mention_bounds = reranker.encode_context(
-                    context_input, gold_mention_idxs=mention_idxs, topK_mention=1
+                    context_input, gold_mention_idxs=mention_idxs, #topK_mention=1,
+                    topK_threshold=0.5,
                 )
-                flattened_embedding_contexts = embedding_context.squeeze(1)
-                # do faiss search for closest entity
-                D, I = faiss_index.search(flattened_embedding_contexts.contiguous().detach().cpu().numpy(), 1)
-                I = I.flatten()
+                if embedding_context.size(0) > 0:
+                    flattened_embedding_contexts = embedding_context.squeeze(1)
+                    # do faiss search for closest entity
+                    D, I = faiss_index.search(flattened_embedding_contexts.contiguous().detach().cpu().numpy(), 1)
+                    I = I.flatten()
+                else:
+                    I = np.array([])
                 tmp_eval_accuracy = 0.0
                 for i, ex in enumerate(I):
                     ex_label_ids = label_ids[i][mention_idx_mask[i]]
                     tmp_eval_accuracy += ex in ex_label_ids  # only 1, so +1 if present, -1 if not present
-                tmp_num_p = float(mention_idx_mask.sum())
-                tmp_num_r = float(I.shape[0])
+                tmp_num_p = float(I.shape[0])
+                tmp_num_r = float(mention_idx_mask.sum())
                 # reranker.tokenizer.decode(context_input[0].tolist())
             else:
                 import pdb
@@ -134,7 +138,10 @@ def evaluate(
         torch.cuda.empty_cache()
 
     normalized_eval_accuracy = eval_accuracy / nb_eval_examples
-    normalized_eval_p = eval_accuracy / eval_num_p
+    if eval_num_p > 0:
+        normalized_eval_p = eval_accuracy / eval_num_p
+    else:
+        normalized_eval_p = 0.0
     normalized_eval_r = eval_accuracy / eval_num_r
     logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
     logger.info("Top-1 Precision: %.5f" % normalized_eval_p)
@@ -389,12 +396,13 @@ def main(params):
             mention_logits = None
             mention_bounds = None
             if params["adversarial_training"]:
+                # TODO CHECK ADVERSARIES
                 cand_encs_index.nprobe = 20
                 assert cand_encs is not None and label_ids is not None  # due to params["freeze_cand_enc"] being set
                 # TODO GET CLOSEST N CANDIDATES HERE (AND APPROPRIATE LABELS)...
                 # (bs, num_spans, embed_size)
                 pos_cand_encs_input = cand_encs[label_ids.to("cpu")]
-                pos_cand_encs_input[mention_idx_mask] = 0
+                pos_cand_encs_input[~mention_idx_mask] = 0
                 # # reshape back tensors (extract num_spans dimension)
                 # # (bs, num_spans, embed_size)
                 # pos_cand_encs_input_reconstruct = torch.zeros(label_ids.size(0), label_ids.size(1), pos_cand_encs_input.size(-1), dtype=pos_cand_encs_input.dtype)
@@ -404,14 +412,16 @@ def main(params):
                 mention_reps, mention_logits, mention_bounds = reranker.encode_context(
                     context_input, gold_mention_idxs=mention_idxs,
                 )
-                # mention_reps: (bs, max_num_spans, embed_size) -> masked_mention_reps: (bs * num_spans, embed_size)
+                # mention_reps: (bs, max_num_spans, embed_size) -> masked_mention_reps: (bs * num_spans [masked], embed_size)
                 masked_mention_reps = mention_reps.reshape(-1, mention_reps.size(2))[mention_idx_mask.flatten()]
 
-                # neg_cand_encs_input_idxs: (bs * num_spans, num_negatives)
+                # neg_cand_encs_input_idxs: (bs * num_spans [masked], num_negatives)
                 _, neg_cand_encs_input_idxs = cand_encs_index.search(masked_mention_reps.detach().cpu().numpy(), num_neighbors)
                 neg_cand_encs_input_idxs = torch.from_numpy(neg_cand_encs_input_idxs)
                 # set "correct" closest entities to -1
+                # masked_label_ids: (bs * num_spans [masked])
                 masked_label_ids = label_ids.flatten()[mention_idx_mask.flatten()]
+                # neg_cand_encs_input_idxs: (bs * num_spans [masked], num_negatives)
                 neg_cand_encs_input_idxs[neg_cand_encs_input_idxs - masked_label_ids.to("cpu").unsqueeze(-1) == 0] = -1
 
                 # reshape back tensor (extract num_spans dimension)
@@ -420,9 +430,9 @@ def main(params):
                 neg_cand_encs_input_idxs_reconstruct[mention_idx_mask] = neg_cand_encs_input_idxs
                 neg_cand_encs_input_idxs = neg_cand_encs_input_idxs_reconstruct
 
-                # create neg_example_idx
+                # create neg_example_idx (corresponding example (in batch) for each negative)
                 # neg_example_idx: (bs * num_negatives)
-                neg_example_idx = torch.arange(neg_cand_encs_input_idxs.size(0)).unsqueeze(-1)  # corresponding example (in batch) for each negative
+                neg_example_idx = torch.arange(neg_cand_encs_input_idxs.size(0)).unsqueeze(-1)
                 neg_example_idx = neg_example_idx.expand(neg_cand_encs_input_idxs.size(0), neg_cand_encs_input_idxs.size(2))
                 neg_example_idx = neg_example_idx.flatten()
 
@@ -442,7 +452,7 @@ def main(params):
                 neg_cand_encs_input = cand_encs[neg_cand_encs_input_idxs]
                 # (bs * num_negatives - invalid_negs, num_spans, embed_size)
                 neg_mention_idx_mask = mention_idx_mask[neg_example_idx]
-                neg_cand_encs_input[~neg_mention_idx_mask] = 0
+                n[~neg_mention_idx_mask] = 0
 
                 # create input tensors (concat [pos examples, neg examples])
                 # (bs + bs * num_negatives, num_spans, embed_size)

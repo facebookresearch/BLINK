@@ -384,27 +384,25 @@ def process_mention_data(
             all_context_lefts = sample[context_key + "_left"]
 
             if isinstance(all_context_lefts, str):
-                context_tokens = get_context_representation_single_mention(
-                    sample,
-                    tokenizer,
-                    max_context_length,
-                    mention_key,
-                    context_key,
-                    ent_start_token,
-                    ent_end_token,
-                    add_mention_bounds=add_mention_bounds,
-                )
-            elif isinstance(all_context_lefts, list):
-                assert not add_mention_bounds, "Adding mention bounds, but we have multiple entities per example"
-                context_tokens = get_context_representation_multiple_mentions(
-                    sample,
-                    tokenizer,
-                    max_context_length,
-                    mention_key,
-                    context_key,
-                    ent_start_token,
-                    ent_end_token,
-                )
+                sample[context_key + "_left"] = [sample[context_key + "_left"]]
+                sample[context_key + "_right"] = [sample[context_key + "_right"]]
+                sample[mention_key] = [sample[mention_key]]
+            #     context_tokens = get_context_representation_single_mention(
+            #         sample,
+            #         tokenizer,
+            #         max_context_length,
+            #         mention_key,
+            #         context_key,
+            #         ent_start_token,
+            #         ent_end_token,
+            #         add_mention_bounds=add_mention_bounds,
+            #     )
+            # elif isinstance(all_context_lefts, list):
+            assert not add_mention_bounds, "Adding mention bounds, but we have multiple entities per example"
+            context_tokens = get_context_representation_multiple_mentions(
+                sample, tokenizer, max_context_length,
+                mention_key, context_key, ent_start_token, ent_end_token,
+            )
 
             # save cached representation
             if get_cached_representation:
@@ -451,6 +449,9 @@ def process_mention_data(
                 "ids": token_ids,
             }
         else:
+            if label is None:
+                label = [None]
+                sample["label_id"] = [sample["label_id"]]
             label_tokens = [get_candidate_representation(
                 l, tokenizer, max_cand_length, title,
             ) for l in label]

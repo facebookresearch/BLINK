@@ -48,7 +48,10 @@ class MentionScoresHead(nn.Module):
         super(MentionScoresHead, self).__init__()
         self.scoring_method = scoring_method
         if self.scoring_method == "qa":
-            self.bound_classifier = nn.Linear(bert_output_dim, 2)
+            self.bound_classifier = nn.Sequential(
+                nn.Linear(bert_output_dim, 2),
+                nn.LogSoftmax(),
+            )
         elif self.scoring_method == "BIO":
             # TODO MLP
             import pdb
@@ -63,21 +66,22 @@ class MentionScoresHead(nn.Module):
             raise NotImplementedError()
 
     def forward(self, bert_output, mask_ctxt):
+        # (bs, seqlen, 4)
         logits = self.bound_classifier(bert_output)
         if self.scoring_method == "qa":
-            start_logits, end_logits = logits.split(1, dim=-1)
-            start_logits = start_logits.squeeze(-1)
-            end_logits = end_logits.squeeze(-1)
+            # (bs, seqlen, 1); (bs, seqlen, 1)
+            start_logprobs, end_logprobs = logits.split(1, dim=-1)
+            # (bs, seqlen)
+            start_logprobs = start_logprobs.squeeze(-1)
+            end_logprobs = end_logprobs.squeeze(-1)
             # impossible to choose masked tokens as starts/ends of spans
-            start_logits[~mask_ctxt] = -float("Inf")
-            end_logits[~mask_ctxt] = -float("Inf")
+            start_logprobs[~mask_ctxt] = -float("Inf")
+            end_logprobs[~mask_ctxt] = -float("Inf")
 
             # take sum of log softmaxes:
-            # p(mention) = p(start_pos && end_pos) = p(start_pos) * p(end_pos)
-            start_logprobs = F.log_softmax(start_logits, 1)
-            end_logprobs = F.log_softmax(end_logits, 1)
+            # log p(mention) = log p(start_pos && end_pos) = log p(start_pos) + log p(end_pos)
             # DIM: (bs, starts, ends)
-            mention_scores = start_logprobs.unsqueeze(-1) + end_logprobs.unsqueeze(1)
+            mention_scores = start_logprobs.unsqueeze(2) + end_logprobs.unsqueeze(1)
 
             # DIM: (starts, ends, 2) -- tuples of [start_idx, end_idx]
             mention_bounds = torch.stack([
@@ -92,11 +96,11 @@ class MentionScoresHead(nn.Module):
             # DIM: (bs, starts, ends)
             valid_mask = (mention_sizes.unsqueeze(0) > 0) & mask_ctxt.unsqueeze(1)
             # DIM: (bs, starts, ends)
-            mention_scores[~valid_mask] = -float("inf")
+            mention_scores[~valid_mask] = -float("inf")  # invalids have logprob=-inf (p=0)
             # DIM: (bs, starts * ends)
             mention_scores = mention_scores.view(mention_scores.size(0), -1)
-            mention_scores = F.log_softmax(mention_scores, dim=1)
-            # DIM: (bs, starts * ends, 2)
+            # mention_scores = F.log_softmax(mention_scores, dim=1)
+            # # DIM: (bs, starts * ends, 2)
             mention_bounds = mention_bounds.view(-1, 2)
             mention_bounds = mention_bounds.unsqueeze(0).expand(mention_scores.size(0), mention_scores.size(1), 2)
         elif self.scoring_method == "BIO":
@@ -136,6 +140,8 @@ class GetContextEmbedsHead(nn.Module):
         # "'{all/fl}_linear' for linear layer over mention, '{all/fl}_mlp' to MLP over mention)",
         # get embedding of [CLS] token
         # try batched_span_select?
+        if mention_idxs.size(0) == 0:
+            return mention_idxs
         if self.tokens_to_aggregate == 'all':
             (
                 embedding_ctxt,  # (batch_size, num_spans, max_batch_span_width, embedding_size)
@@ -182,8 +188,6 @@ class GetContextEmbedsHead(nn.Module):
 class BiEncoderModule(torch.nn.Module):
     def __init__(self, params):
         super(BiEncoderModule, self).__init__()
-        # import pdb
-        # pdb.set_trace()
         # TODO CANDIDATE ENCODER IS BERT_LARGE
         ctxt_bert = BertModel.from_pretrained(params["bert_model"], output_hidden_states=True)
         cand_bert = BertModel.from_pretrained(
@@ -240,6 +244,7 @@ class BiEncoderModule(torch.nn.Module):
         mask_cands,
         gold_mention_idxs=None,
         topK_mention=5,
+        topK_threshold=0.5,
     ):
         embedding_ctxt = None
         mention_logits = None
@@ -257,6 +262,7 @@ class BiEncoderModule(torch.nn.Module):
             else:
                 # NEW system: aggregate mention tokens
                 # retrieve mention tokens
+                # (bs, seqlen, embed_size)
                 bert_output, _, _ = self.context_encoder.bert_model(
                     token_idx_ctxt, segment_idx_ctxt, mask_ctxt,  # what is segment IDs?
                 )
@@ -273,12 +279,19 @@ class BiEncoderModule(torch.nn.Module):
                         # (to consider > 1 candidate, take N largest in 1st dimension)
                         # (bs, 1)
                         # mention_pos = mention_logits.argmax(1).unsqueeze(1)
-                        # (bs, num_pred_mentions)
-                        _, mention_pos = mention_logits.topk(topK_mention, dim=1)
+                        # (bs, max_num_pred_mentions)
+                        # _, mention_pos = mention_logits.topk(topK_mention, dim=1)
                         # (bs, num_pred_mentions, 2)
-                        mention_idxs = torch.gather(mention_bounds, 1, mention_pos.unsqueeze(2).expand(
-                            mention_pos.size(0), mention_pos.size(1), 2,
-                        ))
+                        # mention_idxs = torch.gather(mention_bounds, 1, mention_pos.unsqueeze(2).expand(
+                        #     mention_pos.size(0), mention_pos.size(1), 2,
+                        # ))
+
+                        # (all_pred_mentions_in_batch, 2) of form: [example idx in batch, idx of mention (in starts * ends)]
+                        mention_pos = (mention_logits >= topK_threshold).nonzero()
+                        # reshape back to (bs, num_pred_mentions) mask
+                        mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
+                        mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
+                        mention_idxs = mention_bounds[mention_pos_mask]
                     else:
                         # use gold mention
                         mention_idxs = gold_mention_idxs
@@ -407,7 +420,7 @@ class BiEncoderRanker(torch.nn.Module):
             fp16=self.params.get("fp16"),
         )
  
-    def encode_context(self, cands, gold_mention_idxs=None, topK_mention=5):
+    def encode_context(self, cands, gold_mention_idxs=None, topK_mention=5, topK_threshold=0.5):
         token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
             cands, self.NULL_IDX
         )
@@ -416,6 +429,7 @@ class BiEncoderRanker(torch.nn.Module):
             segment_idx_ctxt=segment_idx_cands, mask_ctxt=mask_cands,
             token_idx_cands=None, segment_idx_cands=None, mask_cands=None,
             gold_mention_idxs=gold_mention_idxs, topK_mention=topK_mention,
+            topK_threshold=topK_threshold,
         )
         # concatenated across 0th dimension
         return embedding_context, mention_logits, mention_bounds
@@ -446,6 +460,8 @@ class BiEncoderRanker(torch.nn.Module):
         gold_mention_idx_mask=None,
         all_inputs_mask=None,
     ):
+        # import pdb
+        # pdb.set_trace()
         if not random_negs:
             assert all_inputs_mask is not None
         if text_encs is None or (
@@ -526,6 +542,8 @@ class BiEncoderRanker(torch.nn.Module):
         return_loss=True,
         # multiple_candidates=False,
     ):
+        # import pdb
+        # pdb.set_trace()
         # if not multiple_candidates:
         #     assert gold_mention_idxs.size(1) == 1 
         # TODO MULTIPLE GOLD MENTIONS / SAMPLE
@@ -579,12 +597,15 @@ class BiEncoderRanker(torch.nn.Module):
     def get_span_loss(
         self, gold_mention_idxs, gold_mention_idx_mask, mention_logits, mention_bounds, N, M,  # global_step,
     ):
+        # import pdb
+        # pdb.set_trace()
         # # clamp to range 0 <= position <= max positions (ignored_index)
-        ignored_index = mention_logits.size(1)
+        # ignored_index = mention_logits.size(1)
         # gold_start_positions.clamp_(0, ignored_index)
         # gold_end_positions.clamp_(0, ignored_index)
 
-        loss_fct = nn.CrossEntropyLoss(reduction="none", ignore_index=ignored_index)
+        # loss_fct = nn.CrossEntropyLoss(reduction="none", ignore_index=ignored_index)
+        loss_fct = nn.BCEWithLogitsLoss(reduction="mean")
 
         gold_mention_idxs[~gold_mention_idx_mask] = -1  # ensure don't select masked to score
         # triples of [ex in batch, mention_idx in gold_mention_idxs, idx in mention_bounds]
@@ -596,35 +617,40 @@ class BiEncoderRanker(torch.nn.Module):
         # (num_gold_mentions [~gold_mention_idx_mask])
         gold_mention_pos = gold_mention_pos_idx[:,2]
         # gold_mention_bounds = mention_bounds[gold_mention_pos_idx[:,2]]
-        # reconstruct from mask
-        gold_mention_pos_reconstruct = torch.zeros(
-            gold_mention_idxs.size()[:2], dtype=gold_mention_idxs.dtype,
-        ).to(gold_mention_idxs.device)
-        gold_mention_pos_reconstruct[gold_mention_idx_mask] = gold_mention_pos
+        # # reconstruct from mask
+        # # (bs, num_gold_mentions)
+        # gold_mention_pos_reconstruct = torch.zeros(
+        #     gold_mention_idxs.size()[:2], dtype=gold_mention_idxs.dtype,
+        # ).to(gold_mention_idxs.device)
+        # gold_mention_pos_reconstruct[gold_mention_idx_mask] = gold_mention_pos
 
-        # compute mention start/end loss (unbind # of mentions dimension)
-        # []
-        mention_losses = [loss_fct(mention_logits, _mention_positions) \
-                        for _mention_positions in torch.unbind(gold_mention_pos_reconstruct, dim=1)]
-        # BS x num_mentions
-        loss_tensor = torch.cat([t.unsqueeze(1) for t in mention_losses], dim=1)
-        loss_tensor[~gold_mention_idx_mask] = -float("inf")
-        loss_tensor = loss_tensor.view(N, M, -1).max(dim=1)[0]
-        if self.loss_type == "mml":
-            # dim=1
-            span_loss = self._take_mml(loss_tensor)
-            # try:
-            #     assert span_loss == loss_tensor.sum()
-            # except AssertionError:
-            #     import pdb
-            #     pdb.set_trace()
-        # elif self.loss_type == "hard-em":
-        #     if numpy.random.random()<min(global_step/self.tau, 0.8):
-        #         span_loss = self._take_min(loss_tensor)
-        #     else:
-        #         span_loss = self._take_mml(loss_tensor)
-        else:
-            raise NotImplementedError()
+        # (bs, total_possible_spans)
+        gold_mention_binary = torch.zeros(mention_logits.size(), dtype=mention_logits.dtype).to(gold_mention_idxs.device)
+        gold_mention_binary[gold_mention_pos_idx[:,0], gold_mention_pos_idx[:,2]] = 1
+        # assert (gold_mention_binary.nonzero() == torch.stack([gold_mention_pos_idx[:,0], gold_mention_pos_idx[:,2]]).t()).all()
+
+        # prune masked spans
+        mask = mention_logits != -float("inf")
+        masked_mention_logits = mention_logits[mask]
+        masked_gold_mention_binary = gold_mention_binary[mask]
+
+        # (bs, total_possible_spans)
+        span_loss = loss_fct(masked_mention_logits, masked_gold_mention_binary)
+
+        # # BS x num_mentions
+        # loss_tensor = torch.cat([t.unsqueeze(1) for t in mention_losses], dim=1)
+        # loss_tensor[~gold_mention_idx_mask] = -float("inf")
+        # loss_tensor = loss_tensor.view(N, M, -1).max(dim=1)[0]
+        # if self.loss_type == "mml":
+        #     # dim=1
+        #     span_loss = self._take_mml(loss_tensor)
+        # # elif self.loss_type == "hard-em":
+        # #     if numpy.random.random()<min(global_step/self.tau, 0.8):
+        # #         span_loss = self._take_min(loss_tensor)
+        # #     else:
+        # #         span_loss = self._take_mml(loss_tensor)
+        # else:
+        #     raise NotImplementedError()
         return span_loss
 
     def _take_min(self, loss_tensor):
