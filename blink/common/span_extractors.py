@@ -50,7 +50,7 @@ def flatten_and_batch_shift_indices(indices: torch.Tensor, sequence_length: int)
     """
     # Shape: (batch_size)
     if torch.max(indices) >= sequence_length or torch.min(indices) < 0:
-        raise ConfigurationError(
+        raise IndexError(
             f"All elements in indices should be in range (0, {sequence_length - 1})"
         )
     offsets = get_range_vector(indices.size(0), get_device_of(indices)) * sequence_length

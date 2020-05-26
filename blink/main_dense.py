@@ -560,46 +560,21 @@ def _run_biencoder(
             # # '''
 
             if not jointly_extract_mentions:
-                scores, start_logits, end_logits = biencoder.score_candidate(
+                import pdb
+                pdb.set_trace()
+                gold_mention_idx_mask = torch.ones(mention_idxs.size(), dtype=torch.bool)
+                scores, mention_logits, mention_bounds = biencoder.score_candidate(
                     context_input, None,
                     cand_encs=candidate_encoding.to(device),
                     gold_mention_idxs=mention_idxs.to(device),
+                    gold_mention_idx_mask=gold_mention_idx_mask.to(device),
                 )
             else:
                 token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
                 context_encoding, _, _ = biencoder.model.context_encoder.bert_model(
                     token_idx_ctxt, segment_idx_ctxt, mask_ctxt,  # what is segment IDs?
                 )
-                start_logits, end_logits = biencoder.model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
-
-                # take sum of log softmaxes
-                # p(mention) = p(start_pos && end_pos) = p(start_pos) * p(end_pos)
-                start_logprobs = F.log_softmax(start_logits, 1)
-                end_logprobs = F.log_softmax(end_logits, 1)
-                # DIM: (bs, starts, ends)
-                mention_scores = start_logprobs.unsqueeze(-1) + end_logprobs.unsqueeze(1)
-                # DIM: (starts, ends, 2) -- tuples of [start_idx, end_idx]
-                mention_bounds = torch.stack([
-                    # torch.arange(mention_scores.size(0)).unsqueeze(-1).unsqueeze(-1).expand_as(mention_scores),  # index in batch
-                    torch.arange(start_logits.size(1)).unsqueeze(-1).expand_as(mention_scores[0]),  # start idxs
-                    torch.arange(end_logits.size(1)).unsqueeze(0).expand_as(mention_scores[0]),  # end idxs
-                ], dim=-1)
-                # DIM: (starts, ends)
-                mention_sizes = mention_bounds[:,:,1] - mention_bounds[:,:,0]
-                # DIM: (bs, ends)
-                seq_paddings = (token_idx_ctxt == biencoder.NULL_IDX)
-
-                # Remove invalids (startpos > endpos, endpos > seqlen) and renormalize
-                # DIM: (bs, starts, ends)
-                valid_mask = (mention_sizes.unsqueeze(0) > 0) & ~seq_paddings.unsqueeze(1)
-                # DIM: (bs, starts, ends)
-                mention_scores[~valid_mask] = -float("inf")
-                # DIM: (bs, starts * ends)
-                mention_scores = mention_scores.view(mention_scores.size(0), -1)
-                mention_scores = F.log_softmax(mention_scores, dim=1)
-                # DIM: (bs, starts * ends, 2)
-                mention_bounds = mention_bounds.unsqueeze(0).expand(valid_mask.size(0), valid_mask.size(1), valid_mask.size(2), 2)
-                mention_bounds = mention_bounds.view(mention_bounds.size(0), -1, 2)
+                mention_scores, mention_bounds = biencoder.model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
 
                 # get top K mentions
                 # DIM (bsz, K)
@@ -1108,24 +1083,16 @@ def run(
                             e_mention_bounds_idxs.sort()
                             all_pred_entities = []
                             e_mention_bounds = []
-                            try:
-                                for bound_idx in e_mention_bounds_idxs:
-                                    if pred_kbids_sorted[bound_idx] not in all_pred_entities:
-                                        all_pred_entities.append(pred_kbids_sorted[bound_idx])
-                                        e_mention_bounds.append(entity_mention_bounds_idx[i][bound_idx])
-                            except:
-                                import pdb
-                                pdb.set_trace()
-                            try:
-                                pred_triples = [(
-                                    # sample['all_gold_entities'][i],
-                                    all_pred_entities[j], # TODO REVERT THIS
-                                    len(sample['context_left'][e_mention_bounds[j]]), 
-                                    len(sample['context_left'][e_mention_bounds[j]]) + len(sample['mention'][e_mention_bounds[j]]),
-                                ) for j in range(len(all_pred_entities))]
-                            except:
-                                import pdb
-                                pdb.set_trace()
+                            for bound_idx in e_mention_bounds_idxs:
+                                if pred_kbids_sorted[bound_idx] not in all_pred_entities:
+                                    all_pred_entities.append(pred_kbids_sorted[bound_idx])
+                                    e_mention_bounds.append(entity_mention_bounds_idx[i][bound_idx])
+                            pred_triples = [(
+                                # sample['all_gold_entities'][i],
+                                all_pred_entities[j], # TODO REVERT THIS
+                                len(sample['context_left'][e_mention_bounds[j]]), 
+                                len(sample['context_left'][e_mention_bounds[j]]) + len(sample['mention'][e_mention_bounds[j]]),
+                            ) for j in range(len(all_pred_entities))]
                             gold_triples = [(
                                 sample['all_gold_entities'][j],
                                 sample['all_gold_entities_pos'][j][0], 

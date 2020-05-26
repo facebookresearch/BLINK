@@ -18,6 +18,27 @@ from blink.biencoder.zeshel_utils import world_to_id
 from blink.common.params import ENT_START_TAG, ENT_END_TAG, ENT_TITLE_TAG
 
 
+def select_field_with_padding(data, key1, key2=None, pad_idx=-1):
+    max_len = 0
+    selected_list = []
+    padding_mask = []
+    for example in data:
+        if key2 is None:
+            selected_list.append(example[key1])
+            max_len = max(max_len, len(example[key1]))
+        else:
+            selected_list.append(example[key1][key2])
+            max_len = max(max_len, len(example[key1][key2]))
+    for i, entry in enumerate(selected_list):
+        # pad to max len
+        pad_list = [1 for _ in range(len(entry))] + [0 for _ in range(max_len - len(entry))]
+        selected_list[i] += [pad_idx for _ in range(max_len - len(entry))]
+        assert len(pad_list) == max_len
+        assert len(selected_list[i]) == max_len
+        padding_mask.append(pad_list)
+    return selected_list, padding_mask
+
+
 def select_field(data, key1, key2=None):
     if key2 is None:
         return [example[key1] for example in data]
@@ -25,7 +46,7 @@ def select_field(data, key1, key2=None):
         return [example[key1][key2] for example in data]
 
 
-def get_context_representation(
+def get_context_representation_single_mention(
     sample,
     tokenizer,
     max_seq_length,
@@ -38,9 +59,10 @@ def get_context_representation(
     mention_tokens = []
     if sample[mention_key] and len(sample[mention_key]) > 0:
         mention_tokens = tokenizer.tokenize(sample[mention_key])
-        if len(mention_tokens) > max_seq_length - 4:	
+        to_subtract = 4 if add_mention_bounds else 2
+        if len(mention_tokens) > max_seq_length - to_subtract:	
             # -4 as 2 for ent_start and ent_end, 2 for [CLS] and [SEP]	
-            mention_tokens = mention_tokens[:max_seq_length - 4]	
+            mention_tokens = mention_tokens[:max_seq_length - to_subtract]	
         if add_mention_bounds:
             mention_tokens = [ent_start_token] + mention_tokens + [ent_end_token]
 
@@ -85,6 +107,87 @@ def get_context_representation(
     }
 
 
+def get_context_representation_multiple_mentions(
+    sample,
+    tokenizer,
+    max_seq_length,
+    mention_key="mention",
+    context_key="context",
+    ent_start_token=ENT_START_TAG,
+    ent_end_token=ENT_END_TAG,
+):
+    mention_tokens = []
+    all_mentions = sample[mention_key]
+
+    for mention in all_mentions:
+        if mention and len(mention) > 0:
+            mention_token = tokenizer.tokenize(mention)
+            if len(mention_token) > max_seq_length - 2:	
+                # -2 for [CLS] and [SEP]
+                mention_token = mention_token[:max_seq_length - 2]
+            mention_tokens.append(mention_token)
+
+    all_context_lefts = sample[context_key + "_left"]
+    all_context_rights = sample[context_key + "_right"]
+    mention_idxs = []
+
+    assert len(all_context_lefts) == len(all_context_rights)
+    assert len(all_context_rights) == len(all_mentions)
+
+    context_tokens = None
+
+    for c in range(len(all_context_lefts)):
+        context_left = all_context_lefts[c]
+        context_right = all_context_rights[c]
+
+        context_left = tokenizer.tokenize(context_left)
+        context_right = tokenizer.tokenize(context_right)
+
+        left_quota = (max_seq_length - len(mention_tokens[c])) // 2 - 1
+        right_quota = max_seq_length - len(mention_tokens[c]) - left_quota - 2
+        left_add = len(context_left)
+        right_add = len(context_right)
+        if left_add <= left_quota:
+            if right_add > right_quota:
+                right_quota += left_quota - left_add
+        else:
+            if right_add <= right_quota:
+                left_quota += right_quota - right_add
+                
+        if left_quota <= 0:	
+            context_left = []	
+        if right_quota <= 0:	
+            context_right = []
+        context_tokens_itr = (
+            context_left[-left_quota:] + mention_tokens[c] + context_right[:right_quota]
+        )
+
+        context_tokens_itr = ["[CLS]"] + context_tokens_itr + ["[SEP]"]
+        if context_tokens is None:
+            context_tokens = context_tokens_itr
+        else:
+            try:
+                assert context_tokens == context_tokens_itr
+            except:
+                import pdb
+                pdb.set_trace()
+        mention_idxs.append([
+            len(context_left[-left_quota:]) + 1,
+            len(context_left[-left_quota:]) + len(mention_tokens[c]) + 1,
+        ])
+
+    input_ids = tokenizer.convert_tokens_to_ids(context_tokens)
+    padding = [0] * (max_seq_length - len(input_ids))
+    input_ids += padding
+    assert len(input_ids) == max_seq_length
+
+    return {
+        "tokens": context_tokens,
+        "ids": input_ids,
+        "mention_idxs": mention_idxs,
+    }
+
+
 def get_candidate_representation(
     candidate_desc, 
     tokenizer, 
@@ -109,7 +212,7 @@ def get_candidate_representation(
 
     return {
         "tokens": cand_tokens,
-        "ids": input_ids,
+        "ids": [input_ids],
     }
 
 
@@ -243,6 +346,9 @@ def process_mention_data(
                 # skip if "[CLS] + mention + [SEP]" is longer
                 continue
 
+            all_context_lefts = sample[context_key + "_left"]
+            assert isinstance(all_context_lefts, str), "Loading from saved implies this is pretraining data, however have multiple entities per example"
+
             context_tokens = get_context_representation_from_saved(
                 sample=sample,
                 max_context_length=max_context_length,
@@ -258,7 +364,7 @@ def process_mention_data(
             )
 
             if do_verify:
-                context_tokens_test = get_context_representation(
+                context_tokens_test = get_context_representation_single_mention(
                     sample,
                     tokenizer,
                     max_context_length,
@@ -275,16 +381,31 @@ def process_mention_data(
                     import pdb
                     pdb.set_trace()
         else:
-            context_tokens = get_context_representation(
-                sample,
-                tokenizer,
-                max_context_length,
-                mention_key,
-                context_key,
-                ent_start_token,
-                ent_end_token,
-                add_mention_bounds=add_mention_bounds,
-            )
+            all_context_lefts = sample[context_key + "_left"]
+
+            if isinstance(all_context_lefts, str):
+                context_tokens = get_context_representation_single_mention(
+                    sample,
+                    tokenizer,
+                    max_context_length,
+                    mention_key,
+                    context_key,
+                    ent_start_token,
+                    ent_end_token,
+                    add_mention_bounds=add_mention_bounds,
+                )
+            elif isinstance(all_context_lefts, list):
+                assert not add_mention_bounds, "Adding mention bounds, but we have multiple entities per example"
+                context_tokens = get_context_representation_multiple_mentions(
+                    sample,
+                    tokenizer,
+                    max_context_length,
+                    mention_key,
+                    context_key,
+                    ent_start_token,
+                    ent_end_token,
+                )
+
             # save cached representation
             if get_cached_representation:
                 mention_ids = context_tokens['ids'][context_tokens['mention_idxs'][0]:context_tokens['mention_idxs'][1]]
@@ -304,30 +425,48 @@ def process_mention_data(
                     'context_right': sample['context_right'],
                 }
                 all_saved_encodings.append(saved_encodings)
-            context_tokens["mention_idxs"][1] -= 1  # make bounds inclusive
+            for i in range(len(context_tokens["mention_idxs"])):
+                context_tokens["mention_idxs"][i][1] -= 1  # make bounds inclusive
 
         label = sample[label_key]
         title = sample.get(title_key, None)
         if get_cached_representation:
             assert candidate_token_ids is not None
             assert entity2id is not None
-            token_ids = candidate_token_ids[entity2id[
-                sample.get('entity', None)
-            ]].tolist()
+            # TODO REVERT UNLESS IS LIST
+            if isinstance(sample["label_id"], list):
+                token_ids = [candidate_token_ids[entity2id[
+                    entity
+                ]].tolist() for entity in sample.get('entity', None)]
+                import pdb
+                pdb.set_trace()
+            else:
+                import pdb
+                pdb.set_trace()
+                token_ids = candidate_token_ids[entity2id[
+                    sample.get('entity', None)
+                ]].tolist()
             label_tokens = {
                 "tokens": "",
                 "ids": token_ids,
             }
         else:
-            label_tokens = get_candidate_representation(
-                label, tokenizer, max_cand_length, title,
-            )
-        label_idx = int(sample["label_id"])
+            label_tokens = [get_candidate_representation(
+                l, tokenizer, max_cand_length, title,
+            ) for l in label]
+            label_tokens = {
+                k: [label_tokens[l][k] for l in range(len(label_tokens))]
+            for k in label_tokens[0]}
+        if isinstance(sample["label_id"], list):
+            label_idx = [int(id) for id in sample["label_id"]]
+        else:
+            assert isinstance(sample["label_id"], int) or isinstance(sample["label_id"], str)
+            label_idx = int(sample["label_id"])
 
         record = {
             "context": context_tokens,
             "label": label_tokens,
-            "label_idx": [label_idx],
+            "label_idx": label_idx,
         }
 
         if "world" in sample:
@@ -364,34 +503,68 @@ def process_mention_data(
             )
             if use_world:
                 logger.info("Src : %d" % sample["src"][0])
-            logger.info("Label_id : %d" % sample["label_idx"][0])
+            logger.info("Label_id : %d" % sample["label_idx"])
 
     context_vecs = torch.tensor(
         select_field(processed_samples, "context", "ids"), dtype=torch.long,
     )
     if logger:
         logger.info("Created context IDs vector")
-    mention_idx_vecs = torch.tensor(
-        select_field(processed_samples, "context", "mention_idxs"), dtype=torch.long,
-    )
-    if logger:
-        logger.info("Created mention positions vector")
-    cand_vecs = torch.tensor(
-        select_field(processed_samples, "label", "ids"), dtype=torch.long,
-    )
-    if logger:
-        logger.info("Created candidate IDs vector")
+    if isinstance(processed_samples[0]["context"]["mention_idxs"][0], int):
+        mention_idx_vecs = torch.tensor(
+            select_field(processed_samples, "context", "mention_idxs"), dtype=torch.long,
+        ).unsqueeze(1)
+        mention_idx_mask = torch.ones(mention_idx_vecs.size(0), dtype=torch.bool).unsqueeze(-1)
+        if logger:
+            logger.info("Created mention positions vector")
+
+        cand_vecs = torch.tensor(
+            select_field(processed_samples, "label", "ids"), dtype=torch.long,
+        )
+        if logger:
+            logger.info("Created candidate IDs vector")
+
+        label_idx = torch.tensor(
+            select_field(processed_samples, "label_idx"), dtype=torch.long,
+        ).unsqueeze(-1)
+        if logger:
+            logger.info("Created label IDXs vector")
+    else:
+        mention_idx_vecs, mention_idx_mask = select_field_with_padding(
+            processed_samples, "context", "mention_idxs", pad_idx=[0,1],  #ensure is a well-formed span
+        )
+        # (bs, max_num_spans, 2)
+        mention_idx_vecs = torch.tensor(mention_idx_vecs, dtype=torch.long)
+        # (bs, max_num_spans)
+        mention_idx_mask = torch.tensor(mention_idx_mask, dtype=torch.bool)
+
+        cand_vecs, cand_mask = select_field_with_padding(
+            processed_samples, "label", "ids", pad_idx=[[0 for _ in range(max_cand_length)]],
+        )
+        # (bs, max_num_spans, 1, max_cand_length)
+        cand_vecs = torch.tensor(cand_vecs, dtype=torch.long)
+        cand_mask = torch.tensor(cand_mask, dtype=torch.bool)
+        assert (cand_mask == mention_idx_mask).all()
+        if logger:
+            logger.info("Created candidate IDs vector")
+
+        label_idx_vecs, label_idx_mask = select_field_with_padding(processed_samples, "label_idx", pad_idx=-1)
+        # (bs, max_num_spans)
+        label_idx = torch.tensor(label_idx_vecs, dtype=torch.long)
+        label_idx_mask = torch.tensor(label_idx_mask, dtype=torch.bool)
+        assert (label_idx_mask == mention_idx_mask).all()
+        if logger:
+            logger.info("Created label IDXs vector")
+    # mention_idx_vecs: (bs, max_num_spans, 2), mention_idx_mask: (bs, max_num_spans)
+    assert len(mention_idx_vecs.size()) == 3
+
     if use_world:
         src_vecs = torch.tensor(
             select_field(processed_samples, "src"), dtype=torch.long,
         )
         if logger:
             logger.info("Created source vector")
-    label_idx = torch.tensor(
-        select_field(processed_samples, "label_idx"), dtype=torch.long,
-    )
-    if logger:
-        logger.info("Created label IDXs vector")
+    
     data = {
         "context_vecs": context_vecs,
         "mention_idx_vecs": mention_idx_vecs,
@@ -401,10 +574,10 @@ def process_mention_data(
 
     if use_world:
         data["src"] = src_vecs
-        tensor_data_tuple = (context_vecs, cand_vecs, src_vecs, label_idx, mention_idx_vecs)
+        tensor_data_tuple = (context_vecs, cand_vecs, src_vecs, label_idx, mention_idx_vecs, mention_idx_mask)
         # tensor_data = TensorDataset(context_vecs, cand_vecs, src_vecs, label_idx, mention_idx_vecs)
     else:
-        tensor_data_tuple = (context_vecs, cand_vecs, label_idx, mention_idx_vecs)
+        tensor_data_tuple = (context_vecs, cand_vecs, label_idx, mention_idx_vecs, mention_idx_mask)
         # tensor_data = TensorDataset(context_vecs, cand_vecs, label_idx, mention_idx_vecs)
     if logger:
         logger.info("Created tensor dataset")

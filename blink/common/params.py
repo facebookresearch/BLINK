@@ -187,6 +187,13 @@ class BlinkParser(argparse.ArgumentParser):
             "Set 'FALSE' to only use entity linking portion of model "
             "(assumes gold mention bounds given)",
         )
+        parser.add_argument(
+            "--mention_scoring_method",
+            dest="mention_scoring_method",
+            default="qa",
+            type=str,
+            help="Method for generating/scoring mentions boundaries (options: 'qa', 'BIO')",
+        )
 
     def add_training_args(self, args=None):
         """

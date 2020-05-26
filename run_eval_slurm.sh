@@ -78,7 +78,7 @@ else
     cuda_args="--use_cuda"
 fi
 
-if [ "${model}" = "finetuned_webqsp" ]
+if [ "${model}" = "finetuned_webqsp" ] || [ "${model}" = "pretrain" ]
 then
     model_folder=${MODEL_PARSE[1]}  # biencoder_none_false_16_2
     epoch=${MODEL_PARSE[2]}  # 9
@@ -86,8 +86,14 @@ then
     then
         model_folder=${MODEL_PARSE[1]}/epoch_${epoch}
     fi
-    biencoder_config=experiments/webqsp/${MODEL_PARSE[1]}/training_params.txt
-    biencoder_model=experiments/webqsp/${model_folder}/pytorch_model.bin
+    if [ "${model}" = "finetuned_webqsp" ]
+    then
+        dir="webqsp"
+    else
+        dir="pretrain"
+    fi
+    biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
+    biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
     entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
     crossencoder_config=models/crossencoder_wiki_large.json  # TODO CHANGE!!! (not fintuned yet...)
     crossencoder_model=models/crossencoder_wiki_large.bin  # TODO CHANGE!!! (not fintuned yet...)
