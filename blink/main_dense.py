@@ -560,9 +560,9 @@ def _run_biencoder(
             # # '''
 
             if not jointly_extract_mentions:
+                gold_mention_idx_mask = torch.ones(mention_idxs.size()[:2], dtype=torch.bool)
                 import pdb
                 pdb.set_trace()
-                gold_mention_idx_mask = torch.ones(mention_idxs.size()[:2], dtype=torch.bool)
                 scores, mention_logits, mention_bounds = biencoder.score_candidate(
                     context_input, None,
                     cand_encs=candidate_encoding.to(device),
@@ -570,8 +570,8 @@ def _run_biencoder(
                     gold_mention_idx_mask=gold_mention_idx_mask.to(device),
                 )
             else:
-                import pdb
-                pdb.set_trace()
+                # import pdb
+                # pdb.set_trace()
                 token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
                 context_encoding, _, _ = biencoder.model.context_encoder.bert_model(
                     token_idx_ctxt, segment_idx_ctxt, mask_ctxt,  # what is segment IDs?
@@ -599,7 +599,7 @@ def _run_biencoder(
                 embedding_ctxt = biencoder.model.classification_heads['get_context_embeds'](
                     context_encoding, topK_mention_bounds_flattened)
                 # DIM (bsz * K, num_candidates)
-                scores = embedding_ctxt.mm(candidate_encoding.to(device).t())
+                scores = embedding_ctxt.squeeze(0).mm(candidate_encoding.to(device).t())
                 # log p(entity) = log [p(entity|mention bounds) * p(mention bounds)] = log p(e|mb) + log p(mb)
                 scores = F.log_softmax(scores, dim=-1) + topK_mention_scores_flattened.unsqueeze(-1)
 

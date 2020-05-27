@@ -16,6 +16,8 @@ import random
 import time
 import numpy as np
 
+import torch.nn.functional as F
+
 from multiprocessing.pool import ThreadPool
 
 from tqdm import tqdm, trange
@@ -93,17 +95,36 @@ def evaluate(
                     topK_threshold=0.5,
                 )
                 if embedding_context.size(0) > 0:
-                    flattened_embedding_contexts = embedding_context.squeeze(1)
+                    if mention_idxs is None:
+                        # (bs, num_mentions)
+                        pred_mention_idx_mask = F.sigmoid(mention_logits) > 0.5
+                    else:
+                        # (bs, 2)
+                        pred_mention_idx_mask = mention_idx_mask
+                    flattened_embedding_contexts = embedding_context[pred_mention_idx_mask]
                     # do faiss search for closest entity
                     D, I = faiss_index.search(flattened_embedding_contexts.contiguous().detach().cpu().numpy(), 1)
                     I = I.flatten()
+                    I_reshape = -np.ones(embedding_context.shape[:2], dtype=I.dtype)
+                    try:
+                        I_reshape[pred_mention_idx_mask.contiguous().detach().cpu().numpy()] = I
+                    except:
+                        import pdb
+                        pdb.set_trace()
                 else:
                     I = np.array([])
+                    I_reshape = np.array([])
                 tmp_eval_accuracy = 0.0
-                for i, ex in enumerate(I):
+                tmp_num_p = 0.0
+                for i, ex in enumerate(I_reshape):
                     ex_label_ids = label_ids[i][mention_idx_mask[i]]
-                    tmp_eval_accuracy += ex in ex_label_ids  # only 1, so +1 if present, -1 if not present
-                tmp_num_p = float(I.shape[0])
+                    if mention_idxs is None:
+                        ex = ex[ex != -1]
+                    else:
+                        ex = ex[pred_mention_idx_mask[i].contiguous().detach().cpu().numpy()]
+                    for j in ex:
+                        tmp_eval_accuracy += j in ex_label_ids  # only 1, so +1 if present, -1 if not present
+                    tmp_num_p += len(ex)
                 tmp_num_r = float(mention_idx_mask.sum())
                 # reranker.tokenizer.decode(context_input[0].tolist())
             else:
@@ -143,15 +164,18 @@ def evaluate(
         normalized_eval_p = eval_accuracy / eval_num_p
     else:
         normalized_eval_p = 0.0
-    normalized_eval_r = eval_accuracy / eval_num_r
+    if eval_num_r > 0:
+        normalized_eval_r = eval_accuracy / eval_num_r
+    else:
+        normalized_eval_r = 0.0
     logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
-    logger.info("Top-1 Precision: %.5f" % normalized_eval_p)
-    logger.info("Top-1 Recall: %.5f" % normalized_eval_r)
+    logger.info("Precision: %.5f" % normalized_eval_p)
+    logger.info("Recall: %.5f" % normalized_eval_r)
     if normalized_eval_p + normalized_eval_r == 0:
         f1 = 0
     else:
         f1 = 2 * normalized_eval_p * normalized_eval_r / (normalized_eval_p + normalized_eval_r)
-    logger.info("Top-1 F1: %.5f" % f1)
+    logger.info("F1: %.5f" % f1)
     results["normalized_accuracy"] = normalized_eval_accuracy
     return results
 

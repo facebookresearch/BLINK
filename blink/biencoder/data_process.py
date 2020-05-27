@@ -556,7 +556,7 @@ def process_mention_data(
         # (bs, max_num_spans, 1, max_cand_length)
         cand_vecs = torch.tensor(cand_vecs, dtype=torch.long)
         cand_mask = torch.tensor(cand_mask, dtype=torch.bool)
-        assert (cand_mask == mention_idx_mask).all()
+        assert (cand_mask == mention_idx_mask).all() or cand_mask.all()
         if logger:
             logger.info("Created candidate IDs vector")
 
@@ -564,7 +564,7 @@ def process_mention_data(
         # (bs, max_num_spans)
         label_idx = torch.tensor(label_idx_vecs, dtype=torch.long)
         label_idx_mask = torch.tensor(label_idx_mask, dtype=torch.bool)
-        assert (label_idx_mask == mention_idx_mask).all()
+        assert (label_idx_mask == mention_idx_mask).all() or label_idx_mask.all()
         if logger:
             logger.info("Created label IDXs vector")
     # mention_idx_vecs: (bs, max_num_spans, 2), mention_idx_mask: (bs, max_num_spans)
