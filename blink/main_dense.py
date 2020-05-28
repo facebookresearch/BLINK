@@ -1013,7 +1013,7 @@ def run(
 
             # run biencoder
             logger.info("Running biencoder...")
-            top_k = 10
+            top_k = 100
 
             labels, nns, dists, new_samples, sample_to_all_context_inputs = _run_biencoder(
                 biencoder, dataloader, candidate_encoding, samples=samples,
@@ -1109,9 +1109,9 @@ def run(
                             sample['gold_mention'], sample['gold_context_right'])
                     if 'all_gold_entities_pos' in sample:
                         if isinstance(sample["context_left"], list):
-                            utterance = sample["context_left"][0] + sample["mention"][0] + sample["context_right"][0]
+                            utterance = sample["context_left"][0] + sample["mention"][0].strip() + sample["context_right"][0]
                         else:
-                            utterance = sample["context_left"] + sample["mention"] + sample["context_right"]
+                            utterance = sample["context_left"] + sample["mention"].strip() + sample["context_right"]
                         gold_mention_bounds_list = []
                         for pos in sample['all_gold_entities_pos']:
                             gold_mention_bounds_list.append("{}[{}]{}".format(
@@ -1147,7 +1147,7 @@ def run(
                             all_pred_entities = pred_kbids_sorted[:1]
                             e_mention_bounds = entity_mention_bounds_idx[i][:1].tolist()
                             # '''
-                            '''
+                            # '''
                             # THRESHOLDING
                             assert utterance is not None
                             top_indices = np.where(distances > 0)[0]
@@ -1155,9 +1155,13 @@ def run(
                             # already sorted by score
                             e_mention_bounds = [entity_mention_bounds_idx[i][topi] for topi in top_indices]
                             # '''
-                            # '''
+                            '''
                             # 1 PER BOUND
-                            e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx[i] == j)[0][0] for j in range(len(sample['context_left']))]
+                            try:
+                                e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx[i] == j)[0][0] for j in range(len(sample['context_left']))]
+                            except:
+                                import pdb
+                                pdb.set_trace()
                             # sort bounds
                             e_mention_bounds_idxs.sort()
                             all_pred_entities = []
@@ -1178,7 +1182,7 @@ def run(
                                 # remove word-boundary demarcators
                                 try:
                                     sample['context_left'][mb_idx] = sample['context_left'][mb_idx].replace("##", "")
-                                    sample['mention'][mb_idx] = sample['mention'][mb_idx].replace("##", "")
+                                    sample['mention'][mb_idx] = sample['mention'][mb_idx].strip().replace("##", "")
                                     sample['context_right'][mb_idx] = sample['context_right'][mb_idx].replace("##", "")
                                 except:
                                     import pdb
@@ -1187,8 +1191,12 @@ def run(
                                 mention_start = len(sample['context_left'][mb_idx])
                                 mention_end = len(sample['context_left'][mb_idx]) + len(sample['mention'][mb_idx])
                                 # check if in existing mentions
-                                if mention_masked_utterance[mention_start] == 1 or mention_masked_utterance[mention_end - 1] == 1:
-                                    continue
+                                try:
+                                    if mention_masked_utterance[mention_start] == 1 or mention_masked_utterance[mention_end - 1] == 1:
+                                        continue
+                                except:
+                                    import pdb
+                                    pdb.set_trace()
                                 e_mention_bounds_pruned.append(mb_idx)
                                 all_pred_entities_pruned.append(all_pred_entities[idx])
                                 mention_masked_utterance[mention_start:mention_end] = 1

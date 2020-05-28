@@ -190,9 +190,9 @@ class BlinkParser(argparse.ArgumentParser):
         parser.add_argument(
             "--mention_scoring_method",
             dest="mention_scoring_method",
-            default="qa",
+            default="qa_linear",
             type=str,
-            help="Method for generating/scoring mentions boundaries (options: 'qa', 'BIO')",
+            help="Method for generating/scoring mentions boundaries (options: 'qa_mlp', 'qa_linear', 'BIO')",
         )
 
     def add_training_args(self, args=None):

@@ -43,17 +43,19 @@ def get_submodel_from_state_dict(state_dict, prefix):
 
 class MentionScoresHead(nn.Module):
     def __init__(
-        self, bert_output_dim, scoring_method="qa",  # options: qa/BIO
+        self, bert_output_dim, scoring_method="qa_linear",  # options: qa_mlp/qa_linear/BIO
     ):
         super(MentionScoresHead, self).__init__()
         self.scoring_method = scoring_method
-        if self.scoring_method == "qa":
+        if self.scoring_method == "qa_linear":
             # self.attention_scorer = nn.Sequential(
             #     nn.Linear(bert_output_dim, bert_output_dim),
             #     nn.ReLU(),
             #     nn.Dropout(0.1),
             #     nn.Linear(bert_output_dim, 1),
             # )
+            self.bound_classifier = nn.Linear(bert_output_dim, 3)
+        elif self.scoring_method == "qa_mlp" or self.scoring_method == "qa":  # for back-compatibility
             self.bound_classifier = nn.Sequential(
                 nn.Linear(bert_output_dim, bert_output_dim),
                 nn.ReLU(),
@@ -77,7 +79,7 @@ class MentionScoresHead(nn.Module):
     def forward(self, bert_output, mask_ctxt):
         # (bs, seqlen, 3)
         logits = self.bound_classifier(bert_output)
-        if self.scoring_method == "qa":
+        if self.scoring_method[:2] == "qa":
             # # (bs, seqlen, 1); (bs, seqlen, 1)
             # start_logprobs, end_logprobs = logits.split(1, dim=-1)
             # # (bs, seqlen)
@@ -193,13 +195,15 @@ class GetContextEmbedsHead(nn.Module):
         # for aggregating mention outputs of context encoder
         self.mention_aggregation_type = mention_aggregation_type.split('_')
         self.tokens_to_aggregate = self.mention_aggregation_type[0]
-        self.aggregate_method = self.mention_aggregation_type[1]
+        self.aggregate_method = "_".join(self.mention_aggregation_type[1:])
         self.dropout = nn.Dropout(dropout)
         if self.mention_aggregation_type == 'all_avg' or self.mention_aggregation_type == 'none':
             assert ctxt_output_dim == cand_output_dim
 
         if self.aggregate_method == 'linear':
             self.mention_agg_linear = nn.Linear(ctxt_output_dim * 2, cand_output_dim)
+        elif self.aggregate_method == 'avg_linear':
+            self.mention_agg_linear = nn.Linear(ctxt_output_dim, cand_output_dim)
         elif self.aggregate_method == 'mlp':
             self.mention_agg_mlp = nn.Sequential(
                 nn.Linear(bert_output_dim, bert_output_dim),
@@ -227,9 +231,12 @@ class GetContextEmbedsHead(nn.Module):
             )
             embedding_ctxt[~mask] = 0  # 0 out masked elements
             # embedding_ctxt = (batch_size, num_spans, max_batch_span_width, embedding_size)
-            if self.aggregate_method == 'avg':
+            if self.aggregate_method.startswith('avg'):
                 embedding_ctxt = embedding_ctxt.sum(2) / mask.sum(2).float().unsqueeze(-1)
                 # embedding_ctxt = (batch_size, num_spans, embedding_size)
+            if self.aggregate_method == 'avg_linear':
+                embedding_ctxt = self.mention_agg_linear(embedding_ctxt)
+                # embedding_ctxt = (batch_size, num_spans, output_dim)
         elif self.tokens_to_aggregate == 'fl':
             # assert 
             start_embeddings = batched_index_select(bert_output, mention_idxs[:,:,0])
@@ -303,7 +310,9 @@ class BiEncoderModule(torch.nn.Module):
                 cand_bert.embeddings.word_embeddings.weight.size(1),
             )}
             if self.do_mention_detection:
-                classification_heads_dict['mention_scores'] = MentionScoresHead(ctxt_bert_output_dim, params["mention_scoring_method"])
+                classification_heads_dict['mention_scores'] = MentionScoresHead(
+                    ctxt_bert_output_dim, params["mention_scoring_method"],
+                )
             self.classification_heads = nn.ModuleDict(classification_heads_dict)
         elif ctxt_bert_output_dim != cand_bert.embeddings.word_embeddings.weight.size(1):
             # mapping to make the output dimensions match for dot-product similarity

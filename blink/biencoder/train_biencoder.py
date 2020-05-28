@@ -179,8 +179,6 @@ def evaluate(
         f1 = 2 * normalized_eval_p * normalized_eval_r / (normalized_eval_p + normalized_eval_r)
     logger.info("F1: %.5f" % f1)
     results["normalized_accuracy"] = normalized_eval_accuracy
-    import pdb
-    pdb.set_trace()
     return results
 
 
@@ -309,7 +307,7 @@ def main(params):
     # Load eval data
     # TODO: reduce duplicated code here
     valid_samples = utils.read_dataset("valid", params["data_path"])
-    valid_subset = 2048
+    valid_subset = 1024
     logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
 
     valid_data, valid_tensor_data = data.process_mention_data(
