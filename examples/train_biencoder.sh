@@ -45,17 +45,18 @@
 # sbatch examples/train_biencoder.sh pretrain none both 128 <true/false> 0
 # sbatch examples/train_biencoder.sh pretrain none predict 512 <true/false> 0
 # sbatch examples/train_biencoder.sh webqsp none train 64 false 16
-data=$1  # webqsp_all_ents/webqsp/zeshel/pretrain
+data=$1  # webqsp_all_ents/graphqs_all_ents/zeshel/pretrain
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none/none_no_mentions
 objective=$3  # train/predict/both (default)
 batch_size=$4  # 128 (for pretraining large model / 128 seqlen) / 32 (for finetuning w/ adversaries / 16 seqlen)
 joint_mention_detection=$5  # "true"/false
 context_length=$6  # 128/20 (smallest)
 load_saved_cand_encs=$7  # true/false
-model_size=$8  # large/base/2/4/6/12
-chunk_start=$9
-chunk_end=${10}
-epoch=${11}
+model_size=$8  # large/base/medium/small/mini/tiny
+mention_scoring_method=$9  # qa_linear/qa_mlp
+chunk_start=${10}
+chunk_end=${11}
+epoch=${12}
 
 
 echo $3
@@ -72,6 +73,9 @@ then
 elif [ "${data}" = "webqsp_all_ents" ]
 then
   data_path="/private/home/belindali/starsem2018-entity-linking/data/WebQSP_all_ents"
+elif [ "${data}" = "graphqs_all_ents" ]
+then
+  data_path="/private/home/belindali/starsem2018-entity-linking/data/graphquestions_all_ents"
 elif [ "${data}" = "zeshel" ]
 then
   data_path="/private/home/ledell/zeshel/data/biencoder/"
@@ -115,8 +119,8 @@ then
   model_ckpt="bert-${model_size}-uncased"
   output_path_model_size=${model_size}
 else
-  model_ckpt="/checkpoint/belindali/BERT/uncased_L-${model_size}_H-128_A-2"
-  output_path_model_size="L${model_size}_H128"
+  model_ckpt="/checkpoint/belindali/BERT/${model_size}"
+  output_path_model_size=${model_size}
 fi
 
 if [ "${epoch}" = "" ]
@@ -133,7 +137,7 @@ then
     then
       batch_size="128"
     fi
-    output_path="experiments/pretrain/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_bert_${output_path_model_size}"
+    output_path="experiments/pretrain/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_bert_${output_path_model_size}_${mention_scoring_method}"
     if [ "${epoch}" != "-1" ]
     then
       model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
@@ -153,6 +157,7 @@ then
       --eval_interval 1000 \
       --last_epoch ${epoch} ${model_path_arg} \
       --max_context_length ${context_length} \
+      --mention_scoring_method ${mention_scoring_method} \
       --data_parallel"
       # --adversarial_training
       # --debug
@@ -165,7 +170,7 @@ then
       batch_size="32"
     fi
     #--load_cand_enc_only \
-    output_path="experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}"
+    output_path="experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_bert_${output_path_model_size}_${mention_scoring_method}"
     if [ "${epoch}" != "-1" ]
     then
       model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
@@ -188,6 +193,7 @@ then
       --train_batch_size ${batch_size} \
       --eval_batch_size 64 \
       --bert_model ${model_ckpt} \
+      --mention_scoring_method ${mention_scoring_method} \
       --eval_interval 500 \
       --last_epoch ${epoch} \
       ${all_mention_args} --data_parallel"  #--debug  #
