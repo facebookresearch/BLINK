@@ -97,7 +97,7 @@ def evaluate(
                 if embedding_context.size(0) > 0:
                     if mention_idxs is None:
                         # (bs, num_mentions)
-                        pred_mention_idx_mask = F.sigmoid(mention_logits) > 0.5
+                        pred_mention_idx_mask = torch.sigmoid(mention_logits) > 0.5
                     else:
                         # (bs, 2)
                         pred_mention_idx_mask = mention_idx_mask
@@ -116,16 +116,18 @@ def evaluate(
                     I_reshape = np.array([])
                 tmp_eval_accuracy = 0.0
                 tmp_num_p = 0.0
+                tmp_num_r = 0.0
                 for i, ex in enumerate(I_reshape):
                     ex_label_ids = label_ids[i][mention_idx_mask[i]]
-                    if mention_idxs is None:
-                        ex = ex[ex != -1]
-                    else:
-                        ex = ex[pred_mention_idx_mask[i].contiguous().detach().cpu().numpy()]
+                    ex = ex[pred_mention_idx_mask[i].contiguous().detach().cpu().numpy()]
+                    # unique-ify ex
+                    seen_ex = {}
                     for j in ex:
-                        tmp_eval_accuracy += j in ex_label_ids  # only 1, so +1 if present, -1 if not present
-                    tmp_num_p += len(ex)
-                tmp_num_r = float(mention_idx_mask.sum())
+                        if j not in seen_ex:
+                            tmp_eval_accuracy += j in ex_label_ids  # only 1, so +1 if present, -1 if not present
+                            seen_ex[j] = 0
+                    tmp_num_p += float(len(ex))
+                tmp_num_r += float(mention_idx_mask.sum())
                 # reranker.tokenizer.decode(context_input[0].tolist())
             else:
                 import pdb
@@ -177,6 +179,8 @@ def evaluate(
         f1 = 2 * normalized_eval_p * normalized_eval_r / (normalized_eval_p + normalized_eval_r)
     logger.info("F1: %.5f" % f1)
     results["normalized_accuracy"] = normalized_eval_accuracy
+    import pdb
+    pdb.set_trace()
     return results
 
 

@@ -361,7 +361,7 @@ class BiEncoderModule(torch.nn.Module):
                         #     mention_pos.size(0), mention_pos.size(1), 2,
                         # ))
                         # (all_pred_mentions_in_batch, 2) of form: [example idx in batch, idx of mention (in starts * ends)]
-                        mention_pos = (F.sigmoid(mention_logits) >= topK_threshold).nonzero()
+                        mention_pos = (torch.sigmoid(mention_logits) >= topK_threshold).nonzero()
                         # reshape back to (bs, num_pred_mentions) mask
                         mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
                         mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
@@ -535,6 +535,7 @@ class BiEncoderRanker(torch.nn.Module):
         gold_mention_idxs=None,
         gold_mention_idx_mask=None,
         all_inputs_mask=None,
+        topK_threshold=0.15,
     ):
         # import pdb
         # pdb.set_trace()
@@ -551,15 +552,17 @@ class BiEncoderRanker(torch.nn.Module):
             token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(
                 text_vecs, self.NULL_IDX
             )
+            # embedding_ctxt: (bs, num_mentions, embed_size) if gold_mention_idxs, else (bs, num_total_mentions, embed_size)
             embedding_ctxt, _, mention_logits, mention_bounds = self.model(
                 token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
                 None, None, None,
                 gold_mention_idxs=gold_mention_idxs,
             )
-            # TODO reshape embedding_ctxt...
-            mention_pos = (F.sigmoid(mention_logits) >= topK_threshold).nonzero()
-            import pdb
-            pdb.set_trace()
+            if not gold_mention_idxs:
+                # TODO reshape embedding_ctxt...
+                mention_pos = (torch.sigmoid(mention_logits) >= topK_threshold).nonzero()
+                import pdb
+                pdb.set_trace()
         else:
             # Context encoding is given, do not need to re-compute
             embedding_ctxt = text_encs
