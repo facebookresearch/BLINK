@@ -1,7 +1,7 @@
 import json
 import os
 
-graphqs = True
+graphqs = False
 if graphqs:
     sn = "graphquestions"
     prefix = "graph"
@@ -28,21 +28,20 @@ for subset in subsets:
         with_classes = ".with_classes"
     else:
         with_classes = ""
-    #'''
+    # '''
     UNFILTERED_FILE = "/private/home/belindali/starsem2018-entity-linking/data/{}/input/{}.{}.entities{}.all_pos.json".format(
         sn, prefix, subset, with_classes)
-    FILTERED_FILE = "/private/home/belindali/starsem2018-entity-linking/data/{}/input/{}.{}.entities{}.all_pos.filtered_on_all.json".format(
+    FILTERED_FILE = "/private/home/belindali/starsem2018-entity-linking/data/{}/input/{}.{}.entities{}.all_pos.filtered_on_all.no_partials.json".format(
         sn, prefix, subset, with_classes)
     FILTER_ON_MAIN = False
-    REINSTATE_PARTIAL_ENTITIES = True
+    REINSTATE_PARTIAL_ENTITIES = True  # keep *all* examples from partial entities
     #'''
     '''
     UNFILTERED_FILE = "/private/home/belindali/starsem2018-entity-linking/data/graphquestions/input/graph.test.entities.all_pos.json"
     FILTERED_FILE = "/private/home/belindali/starsem2018-entity-linking/data/graphquestions/input/graph.test.entities.all_pos.filtered.no_partials.json"
     FILTER_ON_MAIN = False
-    REINSTATE_PARTIAL_ENTITIES = True
+    REINSTATE_PARTIAL_ENTITIES = False
     # '''
-
     examples = json.load(open(UNFILTERED_FILE))
     qid_to_ents = {ex['question_id'] : ex['entities'] for ex in examples}
     examples_ents = []
@@ -51,15 +50,12 @@ for subset in subsets:
             examples_ents.append(ex['main_entity'])
         else:
             examples_ents += ex['entities']
-
     examples_ents = set(examples_ents)
     print("Loaded and parsed examples")
-
     # these are examples to filter
     in_examples_not_in_wiki = examples_ents - all_wiki_ent_ids
     print("Examples to filter: ")
     print(in_examples_not_in_wiki)
-
     examples_filtered = []
     partial_entities_list = []
     removed = {}
@@ -90,6 +86,8 @@ for subset in subsets:
             if len(new_entities_list) == 0:
                 continue
             if len(new_entities_list) < len(ex["entities"]):
+                import pdb
+                pdb.set_trace()
                 partial_entities_list.append(ex["question_id"])
             if not REINSTATE_PARTIAL_ENTITIES:
                 ex['entities'] = new_entities_list
@@ -97,13 +95,11 @@ for subset in subsets:
                 # if 'entity_classes' in ex:
                 #     ex['entity_classes'] = new_entity_classes
             examples_filtered.append(ex)
-
     print("Reinstated {} entities".format(len(partial_entities_list)))
-
     # save filtered version
     print("Filtered {} - {} = {} examples".format(
         str(len(examples)),
         str(len(examples_filtered)),
         str(len(examples) - len(examples_filtered)),
     ))
-    json.dump(examples_filtered, open(FILTERED_FILE, "w"))
+    # json.dump(examples_filtered, open(FILTERED_FILE, "w"))

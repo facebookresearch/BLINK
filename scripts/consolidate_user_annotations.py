@@ -64,7 +64,7 @@ FILTER_ENTITY_SET = [
     "Q44148",  # MALE
     "Q43445",  # FEMALE
     "Q8445",  # Marriage
-    "Q7390",  # HUman voice
+    "Q7390",  # Human voice
     "Q644357",  # NBA Rookie of the year award
     "Q2842604",  # NCAA Division I
 ]

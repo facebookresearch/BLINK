@@ -344,12 +344,12 @@ def __load_test(
 
     qa_classifier_saved = {}
     if do_ner == "qa_classifier":
-        assert getattr(args, 'qa_classifier_threshold', None) is not None
-        if args.qa_classifier_threshold == "top1":
+        assert getattr(args, 'mention_classifier_threshold', None) is not None
+        if args.mention_classifier_threshold == "top1":
             do_top_1 = True
         else:
             do_top_1 = False
-            qa_classifier_threshold = float(args.qa_classifier_threshold)
+            mention_classifier_threshold = float(args.mention_classifier_threshold)
         if "webqsp.test" in test_filename:
             test_predictions_json = "/private/home/sviyer/datasets/webqsp/test_predictions.json"
         elif "webqsp.dev" in test_filename:
@@ -365,7 +365,7 @@ def __load_test(
                         pred['logit'][1] = math.log(pred['logit'][1])
                     if (
                         (do_top_1 and i == 0) or 
-                        (not do_top_1 and pred['logit'][1] > qa_classifier_threshold)
+                        (not do_top_1 and pred['logit'][1] > mention_classifier_threshold)
                         # or i == 0  # have at least 1 candidate
                     ):
                         all_ex_preds.append(pred)
@@ -509,10 +509,10 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
 
 
 def _run_biencoder(
-    biencoder, dataloader, candidate_encoding, samples,
+    args, biencoder, dataloader, candidate_encoding, samples,
     top_k=100, device="cpu", jointly_extract_mentions=False,
     sample_to_all_context_inputs=None, num_mentions=10,  # TODO don't hardcode
-    qa_classifier_threshold=0.25,
+    mention_classifier_threshold=0.25,
 ):
     # TODO DELETE THIS
     # cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
@@ -596,7 +596,7 @@ def _run_biencoder(
                 # # DIM (bsz * K)
                 # topK_mention_scores_flattened = topK_mention_scores.flatten()
 
-                mention_pos = (torch.sigmoid(mention_logits) >= qa_classifier_threshold).nonzero()
+                mention_pos = (torch.sigmoid(mention_logits) >= mention_classifier_threshold).nonzero()
                 # mention_pos_mask = torch.sigmoid(mention_logits) > 0.25
                 # reshape back to (bs, num_mentions) mask
                 mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
@@ -617,8 +617,11 @@ def _run_biencoder(
                 # DIM (num_total_mentions, num_candidates)
                 scores = embedding_ctxt.squeeze(0).mm(candidate_encoding.to(device).t())
                 # DIM (num_total_mentions, num_candidates)
-                # log p(entity) = log [p(entity|mention bounds) * p(mention bounds)] = log p(e|mb) + log p(mb)
-                scores = F.log_softmax(scores, dim=-1) + F.sigmoid(mention_logits)[mention_pos_mask].unsqueeze(-1)
+                scores = F.log_softmax(scores, dim=-1)
+                if args.final_thresholding != "top_entity_by_mention":
+                    # DIM (num_total_mentions, num_candidates)
+                    # log p(entity && mb) = log [p(entity|mention bounds) * p(mention bounds)] = log p(e|mb) + log p(mb)
+                    scores += F.sigmoid(mention_logits)[mention_pos_mask].unsqueeze(-1)
 
                 # DIM (bs, max_pred_mentions, num_candidates)
                 scores_reconstruct = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max(), scores.size(-1), dtype=scores.dtype).to(scores.device)
@@ -850,24 +853,6 @@ def load_models(args, logger):
     elif args.use_cuda and type(biencoder.model).__name__ != 'DataParallel':
         biencoder.model = torch.nn.DataParallel(biencoder.model)
 
-    crossencoder = None
-    crossencoder_params = None
-    if not args.fast:
-        # load crossencoder model
-        logger.info("loading crossencoder model")
-        with open(args.crossencoder_config) as json_file:
-            crossencoder_params = json.load(json_file)
-            crossencoder_params["eval_batch_size"] = args.eval_batch_size
-            crossencoder_params["path_to_model"] = args.crossencoder_model
-            crossencoder_params["no_cuda"] = not args.use_cuda
-            if crossencoder_params["no_cuda"]:
-                crossencoder_params["data_parallel"] = False
-        crossencoder = load_crossencoder(crossencoder_params)
-        if not args.use_cuda and type(crossencoder.model).__name__ == 'DataParallel':
-            crossencoder.model = crossencoder.model.module
-        elif args.use_cuda and type(biencoder.model).__name__ != 'DataParallel':
-            crossencoder.model = torch.nn.DataParallel(crossencoder.model)
-
     # load candidate entities
     logger.info("loading candidate entities")
 
@@ -1013,15 +998,14 @@ def run(
 
             # run biencoder
             logger.info("Running biencoder...")
-            top_k = 100
 
             labels, nns, dists, new_samples, sample_to_all_context_inputs = _run_biencoder(
-                biencoder, dataloader, candidate_encoding, samples=samples,
-                top_k=top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
+                args, biencoder, dataloader, candidate_encoding, samples=samples,
+                top_k=args.top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
                 jointly_extract_mentions=(args.do_ner == "joint"),
                 sample_to_all_context_inputs=sample_to_all_context_inputs,
-                # num_mentions=int(args.qa_classifier_threshold) if args.do_ner == "joint" else None,
-                qa_classifier_threshold=float(args.qa_classifier_threshold) if args.do_ner == "joint" else None,
+                # num_mentions=int(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
+                mention_classifier_threshold=float(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
             )
             logger.info("Finished running biencoder")
             
@@ -1147,30 +1131,28 @@ def run(
                             all_pred_entities = pred_kbids_sorted[:1]
                             e_mention_bounds = entity_mention_bounds_idx[i][:1].tolist()
                             # '''
-                            # '''
-                            # THRESHOLDING
-                            assert utterance is not None
-                            top_indices = np.where(distances > 0)[0]
-                            all_pred_entities = [pred_kbids_sorted[topi] for topi in top_indices]
-                            # already sorted by score
-                            e_mention_bounds = [entity_mention_bounds_idx[i][topi] for topi in top_indices]
-                            # '''
-                            '''
-                            # 1 PER BOUND
-                            try:
-                                e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx[i] == j)[0][0] for j in range(len(sample['context_left']))]
-                            except:
-                                import pdb
-                                pdb.set_trace()
-                            # sort bounds
-                            e_mention_bounds_idxs.sort()
-                            all_pred_entities = []
-                            e_mention_bounds = []
-                            for bound_idx in e_mention_bounds_idxs:
-                                if pred_kbids_sorted[bound_idx] not in all_pred_entities:
-                                    all_pred_entities.append(pred_kbids_sorted[bound_idx])
-                                    e_mention_bounds.append(entity_mention_bounds_idx[i][bound_idx])
-                            # '''
+                            if args.final_thresholding == "joint_0":
+                                # THRESHOLDING
+                                assert utterance is not None
+                                top_indices = np.where(distances > 0)[0]
+                                all_pred_entities = [pred_kbids_sorted[topi] for topi in top_indices]
+                                # already sorted by score
+                                e_mention_bounds = [entity_mention_bounds_idx[i][topi] for topi in top_indices]
+                            elif args.final_thresholding == "top_joint_by_mention" or args.final_thresholding == "top_entity_by_mention":
+                                # 1 PER BOUND
+                                try:
+                                    e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx[i] == j)[0][0] for j in range(len(sample['context_left']))]
+                                except:
+                                    import pdb
+                                    pdb.set_trace()
+                                # sort bounds
+                                e_mention_bounds_idxs.sort()
+                                all_pred_entities = []
+                                e_mention_bounds = []
+                                for bound_idx in e_mention_bounds_idxs:
+                                    if pred_kbids_sorted[bound_idx] not in all_pred_entities:
+                                        all_pred_entities.append(pred_kbids_sorted[bound_idx])
+                                        e_mention_bounds.append(entity_mention_bounds_idx[i][bound_idx])
 
                             # prune mention overlaps
                             e_mention_bounds_pruned = []
@@ -1253,10 +1235,9 @@ def run(
                 print("number unknown entity examples: {}".format(num_unk))
 
             # get recall values
-            top_k = 100
             x = []
             y = []
-            for i in range(1, top_k):
+            for i in range(1, args.top_k):
                 temp_y = 0.0
                 for label, top in zip(labels_merged, nns_merged):
                     if label in top[:i]:
@@ -1269,255 +1250,10 @@ def run(
             biencoder_accuracy = y[0]
             recall_at = y[-1]
             print("biencoder accuracy: %.4f" % biencoder_accuracy)
-            print("biencoder recall@%d: %.4f" % (top_k, y[-1]))
+            print("biencoder recall@%d: %.4f" % (args.top_k, y[-1]))
 
-            if args.fast:
-                # use only biencoder
-                return biencoder_accuracy, recall_at, 0, 0, len(samples)
-        else:
-            keep_all = (
-                args.interactive
-                or samples[0]["label"] == "unknown"
-                or samples[0]["label_id"] < 0
-            )
-            biencoder_accuracy = -1
-            recall_at = -1
-            if not keep_all:
-                # get recall values
-                top_k = 100
-                x = []
-                y = []
-                for i in range(1, top_k):
-                    temp_y = 0.0
-                    for label, top in zip(labels, nns):
-                        if label in top[:i]:
-                            temp_y += 1
-                    if len(labels) > 0:
-                        temp_y /= len(labels)
-                    x.append(i)
-                    y.append(temp_y)
-                # plt.plot(x, y)
-                biencoder_accuracy = y[0]
-                recall_at = y[-1]
-                print("biencoder accuracy: %.4f" % biencoder_accuracy)
-                print("biencoder recall@%d: %.4f" % (top_k, y[-1]))
-
-            if args.fast:
-
-                predictions = []
-                for entity_list in nns:
-                    sample_prediction = []
-                    for e_id in entity_list:
-                        e_title = id2title[e_id]
-                        sample_prediction.append(e_title)
-                    predictions.append(sample_prediction)
-
-                # use only biencoder
-                return (
-                    biencoder_accuracy,
-                    recall_at,
-                    -1,
-                    -1,
-                    len(samples),
-                    predictions,
-                )
-
-        # prepare crossencoder data
-        logger.info("preparing crossencoder data")
-        # if args.debug_cross:
-        #     samples = samples[:10]
-        #     labels = labels[:10]
-        #     nns = nns[:10]
-
-        # prepare crossencoder data
-        if not os.path.exists(os.path.join(args.save_preds_dir, "context_input.t7")):
-            context_input, candidate_input, label_input, filtered_indices = prepare_crossencoder_data(
-                crossencoder.tokenizer, candidate_token_ids,
-                samples, labels, nns,
-                id2title, id2text,
-                keep_all=(args.get_predictions or args.interactive),
-                logger=logger,
-            )
-            torch.save(context_input, os.path.join(args.save_preds_dir, "context_input.t7"))
-            torch.save(candidate_input, os.path.join(args.save_preds_dir, "candidate_input.t7"))
-            torch.save(label_input, os.path.join(args.save_preds_dir, "label_input.t7"))
-            torch.save(filtered_indices, os.path.join(args.save_preds_dir, "filtered_indices.t7"))
-        else:
-            context_input = torch.load(os.path.join(args.save_preds_dir, "context_input.t7"))
-            candidate_input = torch.load(os.path.join(args.save_preds_dir, "candidate_input.t7"))
-            label_input = torch.load(os.path.join(args.save_preds_dir, "label_input.t7"))
-            filtered_indices = torch.load(os.path.join(args.save_preds_dir, "filtered_indices.t7"))
-
-        save_crossencoder_file = os.path.join(args.save_preds_dir, 'crossencoder_outs.npy')
-
-        # run crossencoder and get accuracy
-        if not os.path.exists(save_crossencoder_file):
-            logger.info("Merging context+candidate input for crossencoder...")
-            context_input = modify(
-                context_input, candidate_input, crossencoder_params["max_seq_length"]
-            )
-
-            logger.info("Creating dataloader for crossencoder...")
-            dataloader = _process_crossencoder_dataloader(
-                context_input, label_input, crossencoder_params
-            )
-            logger.info("Running crossencoder...")
-            if args.debug_cross:
-                accuracy, res = _run_crossencoder(
-                    crossencoder, dataloader, logger, device=("cuda" if args.use_cuda else "cpu"), context_len=biencoder_params["max_context_length"],
-                    id2kb=id2kb, get_all_scores=True, forward_only=args.get_predictions,
-                )
-                # save scores
-            else:
-                accuracy, res = _run_crossencoder(
-                    crossencoder, dataloader, logger, device=("cuda" if args.use_cuda else "cpu"), context_len=biencoder_params["max_context_length"],
-                    get_all_scores=True, forward_only=args.get_predictions
-                )
-
-            logger.info("Finished running crossencoder")
-            np.save(save_crossencoder_file, res["logits"])
-            print("crossencoder accuracy (unmerged same examples, different entities): %d / %d = %.4f" % (res['num_correct'], res['num_total'], accuracy))
-        else:
-            res = {
-                "logits": np.load(save_crossencoder_file)
-            }
-
-
-        if args.interactive:
-
-            print("\naccurate (crossencoder) predictions:")
-
-            _print_colorful_text(text, samples)
-
-            # print crossencoder prediction
-            idx = 0
-            for entity_list, prediction, sample in zip(nns, predictions, samples):
-                e_id = entity_list[prediction]
-                e_title = id2title[e_id]
-                e_text = id2text[e_id]
-                _print_colorful_prediction(idx, sample, e_id, e_title, e_text)
-                idx += 1
-            print()
-
-        elif args.qa_data:
-            filtered_indices = set(filtered_indices)
-            
-            if args.debug_cross:
-                import pdb
-                pdb.set_trace()
-            samples_merged, labels_merged, nns_merged, scores_merged, entity_mention_bounds_idx, filtered_cluster_indices = \
-                _combine_same_inputs_diff_mention_bounds(
-                    samples, labels, nns, res["logits"], sample_to_all_context_inputs, debug=args.debug_cross, filtered_indices=filtered_indices
-                )
-            # filter out missing clusters
-            # all_entity_preds = [all_entity_preds[i] for i in range(len(all_entity_preds)) if i not in filtered_cluster_indices]
-            if not args.debug_cross:
-                assert len(samples_merged) == len(all_entity_preds)
-            
-            # save crossencoder predictions
-            save_crossencoder_file_json = os.path.join(args.save_preds_dir, 'crossencoder_outs.jsonl')
-            with open(save_crossencoder_file_json, "w") as f:
-                num_correct = 0
-                num_predicted = 0
-                num_gold = 0
-                num_total = 0
-                cross_results_idx = 0  # indexes into cross encoder results i.e. res[xx]
-                for i, example in enumerate(all_entity_preds):
-                    # don't have estimates
-                    # TODO do this in biencoder eval as well
-                    sample = samples_merged[i]
-                    example_scores = scores_merged[i]
-                    pred_kbids_sorted = []
-                    pred_titles_sorted = []
-                    for el_id in nns_merged[i]:
-                        kbid = id2kb.get(el_id, "")
-                        title = id2title.get(el_id, "")
-                        pred_kbids_sorted.append(kbid)
-                        pred_titles_sorted.append(title)
-                        # sanity checks
-                        if kbid != "":
-                            assert title != ""
-                        assert kbid in example["all_pred_KBids"]
-
-                    example_cross_results = {
-                        "q_id": example["q_id"],
-                        "input_mention_bounds": example["input_mention_bounds"],
-                        "sorted_pred_KBids": pred_kbids_sorted,
-                        "sorted_pred_titles": pred_titles_sorted,
-                        "sorted_mention_bound_idx": entity_mention_bounds_idx[i].tolist(),
-                        "scores": example_scores.tolist(),
-                    }
-                    if "gold_KBid" in example or "all_gold_entities" in sample:
-                        if args.eval_main_entity:
-                            if len(pred_kbids_sorted) == 0:
-                                # preds were all skipped (filtered out)
-                                example_cross_results["top_pred_KBid"] = "not_in_bienc_cands"
-                                pred_triple = [(
-                                    example_cross_results["top_pred_KBid"], 0, 0,
-                                )]
-                            else:
-                                example_cross_results["top_pred_KBid"] = pred_kbids_sorted[0]
-                                pred_triple = [(
-                                    example_cross_results["top_pred_KBid"],
-                                    len(sample['context_left'][entity_mention_bounds_idx[i][0]]), 
-                                    len(sample['context_left'][entity_mention_bounds_idx[i][0]]) + len(sample['mention'][entity_mention_bounds_idx[i][0]]),
-                                )]
-                            gold_triple = [(
-                                example["gold_KBid"],
-                                len(sample['gold_context_left']), 
-                                len(sample['gold_context_left']) + len(sample['gold_mention']),
-                            )]
-                            if entity_linking_tp_with_overlap(gold_triple, pred_triple):
-                                num_correct += 1
-                            num_total += 1
-                            example_cross_results["gold_KBid"] = example["gold_KBid"]
-                        else:
-                            # get *all* entities, removing duplicates
-                            all_pred_entities = set(pred_kbids_sorted[:1])
-                            for entity in all_pred_entities:
-                                if entity in sample["all_gold_entities"]:
-                                    num_correct += 1
-                                num_predicted += 1
-                            num_gold += len(sample["all_gold_entities"])
-                            example_cross_results["all_gold_entities"] = sample["all_gold_entities"]
-
-                    f.write(json.dumps(example_cross_results) + "\n")
-            if args.eval_main_entity:
-                if num_total > 0:
-                    print("crossencoder accuracy (merged same examples, different entities): %d / %d = %.4f" % (
-                        num_correct, num_total, float(num_correct) / num_total,
-                    ))
-            else:
-                if num_gold and num_predicted > 0:
-                    print("crossencoder precision (merged same examples, different entities): %d / %d = %.4f" % (
-                        num_correct, num_predicted, float(num_correct) / num_predicted,
-                    ))
-                    print("crossencoder recall (merged same examples, different entities): %d / %d = %.4f" % (
-                        num_correct, num_gold, float(num_correct) / num_gold,
-                    ))
-                    print("crossencoder F1 (merged same examples, different entities): %.4f" % (
-                        (2 * (float(num_correct) / num_gold) * (float(num_correct) / num_predicted)) / (float(num_correct) / num_gold + float(num_correct) / num_predicted),
-                    ))
-
-            print("Finished saving crossencoder outputs")
-        else:
-            crossencoder_normalized_accuracy = accuracy
-            print(
-                "crossencoder normalized accuracy: %.4f"
-                % crossencoder_normalized_accuracy
-            )
-
-            overall_unormalized_accuracy = (
-                crossencoder_normalized_accuracy * len(label_input) / len(samples)
-            )
-            print("overall unnormalized accuracy: %.4f" % overall_unormalized_accuracy)
-            return (
-                biencoder_accuracy,
-                recall_at,
-                crossencoder_normalized_accuracy,
-                overall_unormalized_accuracy,
-                len(samples),
-            )
+            # use only biencoder
+            return biencoder_accuracy, recall_at, 0, 0, len(samples)
 
 
 if __name__ == "__main__":
@@ -1564,8 +1300,18 @@ if __name__ == "__main__":
         "(Set 'none' to get gold mention bounds from examples)"
     )
     parser.add_argument(
-        "--qa_classifier_threshold", type=str, default=None, help="Must be specified if '--do_ner qa_classifier'."
-        "Threshold for qa classifier score for which examples will be pruned if they fall under that threshold."
+        "--mention_classifier_threshold", type=str, default=None, help="Must be specified if '--do_ner qa_classifier'."
+        "Threshold for mention classifier score (either qa or joint) for which examples will be pruned if they fall under that threshold."
+    )
+    parser.add_argument(
+        "--top_K", type=int, default=100, help="Must be specified if '--do_ner qa_classifier'."
+        "Number of entity candidates to consider per mention"
+    )
+    parser.add_argument(
+        "--final_thresholding", type=str, default=None, help="How to threshold the final candidates."
+        "`top_joint_by_mention`: get top candidate (with joint score) for each predicted mention bound."
+        "`top_entity_by_mention`: get top candidate (with entity score) for each predicted mention bound."
+        "`joint_0`: by thresholding joint score to > 0."
     )
 
 
@@ -1625,21 +1371,6 @@ if __name__ == "__main__":
         "'{all/fl}_linear' for linear layer over mention, '{all/fl}_mlp' to MLP over mention)",
     )
 
-    # crossencoder
-    parser.add_argument(
-        "--crossencoder_model",
-        dest="crossencoder_model",
-        type=str,
-        default="models/crossencoder_wiki_large.bin",
-        help="Path to the crossencoder model.",
-    )
-    parser.add_argument(
-        "--crossencoder_config",
-        dest="crossencoder_config",
-        type=str,
-        default="models/crossencoder_wiki_large.json",
-        help="Path to the crossencoder configuration.",
-    )
     parser.add_argument(
         "--eval_batch_size",
         dest="eval_batch_size",
