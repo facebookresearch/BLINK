@@ -20,15 +20,12 @@ import torch.nn.functional as F
 import blink.ner as NER
 from torch.utils.data import DataLoader, SequentialSampler, TensorDataset
 from blink.biencoder.biencoder import BiEncoderRanker, load_biencoder, to_bert_input
-from blink.crossencoder.crossencoder import CrossEncoderRanker, load_crossencoder
 from blink.biencoder.data_process import (
     process_mention_data,
     get_context_representation_single_mention,
     get_candidate_representation,
 )
 import blink.candidate_ranking.utils as utils
-from blink.crossencoder.data_process import prepare_crossencoder_data
-from blink.crossencoder.train_cross import modify, evaluate
 import math
 
 import vcg_utils
@@ -39,6 +36,7 @@ import os
 import sys
 from tqdm import tqdm
 import pdb
+import time
 
 
 HIGHLIGHTS = [
@@ -697,30 +695,6 @@ def _decode_tokens(tokenizer, token_list):
     return decoded_string
 
 
-def _process_crossencoder_dataloader(context_input, label_input, crossencoder_params):
-    tensor_data = TensorDataset(context_input, label_input)
-    sampler = SequentialSampler(tensor_data)
-    dataloader = DataLoader(
-        tensor_data, sampler=sampler, batch_size=crossencoder_params["eval_batch_size"]
-    )
-    return dataloader
-
-
-def _run_crossencoder(
-    crossencoder, dataloader, logger, context_len, device="cuda",
-    id2kb=None, get_all_scores=False, forward_only=False
-):
-    crossencoder.model.eval()
-    accuracy = 0.0
-    crossencoder.to(device)
-
-    res = evaluate(
-        crossencoder, dataloader, device, logger, context_len, silent=False, id2kb=id2kb,
-        forward_only=forward_only)
-    accuracy = res["normalized_accuracy"]
-    return accuracy, res
-
-
 def _combine_same_inputs_diff_mention_bounds(samples, labels, nns, dists, sample_to_all_context_inputs, filtered_indices=None, debug=False):
     # TODO save ALL samples
     if not debug:
@@ -882,8 +856,6 @@ def load_models(args, logger):
     return (
         biencoder,
         biencoder_params,
-        crossencoder,
-        crossencoder_params,
         candidate_encoding,
         candidate_token_ids,
         title2id,
@@ -900,8 +872,6 @@ def run(
     logger,
     biencoder,
     biencoder_params,
-    crossencoder,
-    crossencoder_params,
     candidate_encoding,
     candidate_token_ids,
     title2id,
@@ -989,7 +959,7 @@ def run(
 
         # prepare the data for biencoder
         # run biencoder if predictions not saved
-        if not os.path.exists(os.path.join(args.save_preds_dir, 'sample_to_all_context_inputs.json')):
+        if not os.path.exists(os.path.join(args.save_preds_dir, 'runtime.txt')):
             logger.info("Preparing data for biencoder....")
             dataloader = _process_biencoder_dataloader(
                 samples, biencoder.tokenizer, biencoder_params
@@ -999,6 +969,7 @@ def run(
             # run biencoder
             logger.info("Running biencoder...")
 
+            start_time = time.time()
             labels, nns, dists, new_samples, sample_to_all_context_inputs = _run_biencoder(
                 args, biencoder, dataloader, candidate_encoding, samples=samples,
                 top_k=args.top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
@@ -1007,15 +978,21 @@ def run(
                 # num_mentions=int(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
                 mention_classifier_threshold=float(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
             )
+            end_time = time.time()
             logger.info("Finished running biencoder")
+
+            runtime = end_time - start_time
             
             np.save(os.path.join(args.save_preds_dir, "biencoder_labels.npy"), labels)
             np.save(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), nns)
             np.save(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), dists)
             json.dump(new_samples, open(os.path.join(args.save_preds_dir, "samples.json"), "w"))
             json.dump(sample_to_all_context_inputs, open(os.path.join(args.save_preds_dir, "sample_to_all_context_inputs.json"), "w"))
+            with open(os.path.join(args.save_preds_dir, "runtime.txt"), "w") as wf:
+                wf.write(str(runtime))
         else:
             labels, nns, dists = _retrieve_from_saved_biencoder_outs(args.save_preds_dir)
+            runtime = float(open(os.path.join(args.save_preds_dir, "runtime.txt")).read())
             if args.do_ner != "joint" and not os.path.exists(os.path.join(args.save_preds_dir, "samples.json")):
                 json.dump(new_samples, open(os.path.join(args.save_preds_dir, "samples.json"), "w"))  # TODO UNCOMMENT
                 json.dump(sample_to_all_context_inputs, open(os.path.join(args.save_preds_dir, "sample_to_all_context_inputs.json"), "w"))
@@ -1045,9 +1022,7 @@ def run(
                 idx += 1
             print()
 
-            if args.fast:
-                # use only biencoder
-                continue
+            continue
 
         elif args.qa_data:
             # save biencoder predictions and print precision/recalls
@@ -1139,12 +1114,15 @@ def run(
                                 # already sorted by score
                                 e_mention_bounds = [entity_mention_bounds_idx[i][topi] for topi in top_indices]
                             elif args.final_thresholding == "top_joint_by_mention" or args.final_thresholding == "top_entity_by_mention":
-                                # 1 PER BOUND
-                                try:
-                                    e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx[i] == j)[0][0] for j in range(len(sample['context_left']))]
-                                except:
-                                    import pdb
-                                    pdb.set_trace()
+                                if len(entity_mention_bounds_idx[i]) == 0:
+                                    e_mention_bounds_idxs = []
+                                else:
+                                    # 1 PER BOUND
+                                    try:
+                                        e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx[i] == j)[0][0] for j in range(len(sample['context_left']))]
+                                    except:
+                                        import pdb
+                                        pdb.set_trace()
                                 # sort bounds
                                 e_mention_bounds_idxs.sort()
                                 all_pred_entities = []
@@ -1231,6 +1209,10 @@ def run(
                 print("biencoder precision = {} / {} = {}".format(num_correct, num_predicted, p))
                 print("biencoder recall = {} / {} = {}".format(num_correct, num_gold, r))
                 print("biencoder f1 = {}".format(f1))
+                print("biencoder runtime = {}".format(runtime))
+
+                return f1, r
+
             if args.do_ner == "none":
                 print("number unknown entity examples: {}".format(num_unk))
 
@@ -1264,9 +1246,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--debug_biencoder", "-db", action="store_true", default=False, help="Debug biencoder"
-    )
-    parser.add_argument(
-        "--debug_cross", "-dc", action="store_true", default=False, help="Debug crossencoder"
     )
     # evaluation mode
     parser.add_argument(
@@ -1304,7 +1283,7 @@ if __name__ == "__main__":
         "Threshold for mention classifier score (either qa or joint) for which examples will be pruned if they fall under that threshold."
     )
     parser.add_argument(
-        "--top_K", type=int, default=100, help="Must be specified if '--do_ner qa_classifier'."
+        "--top_k", type=int, default=100, help="Must be specified if '--do_ner qa_classifier'."
         "Number of entity candidates to consider per mention"
     )
     parser.add_argument(
@@ -1354,21 +1333,6 @@ if __name__ == "__main__":
         # default="models/tac_candidate_encode_large.t7",  # TAC-KBP
         default="models/all_entities_large.t7",  # ALL WIKIPEDIA!
         help="Path to the entity catalogue.",
-    )
-    # TODO DELETE LATER
-    parser.add_argument(
-        "--no_mention_bounds_biencoder",
-        dest="no_mention_bounds_biencoder",
-        action="store_true",
-        default=False,
-    )
-    parser.add_argument(
-        "--mention_aggregation_type",
-        default=None,
-        type=str,
-        help="Type of mention aggregation (None to just use [CLS] token, "
-        "'all_avg' to average across tokens in mention, 'fl_avg' to average across first/last tokens in mention, "
-        "'{all/fl}_linear' for linear layer over mention, '{all/fl}_mlp' to MLP over mention)",
     )
 
     parser.add_argument(

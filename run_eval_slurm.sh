@@ -22,14 +22,17 @@
 # bash run_eval_slurm.sh 64 webqsp_filtered pretrain_none_biencoder qa_classifier dev false 0 false
 # bash run_eval_slurm.sh 64 webqsp_filtered pretrain_all_avg_biencoder qa_classifier dev false 0 false
 # bash run_eval_slurm.sh 64 webqsp_filtered 'finetuned_webqsp_all_ents;<model_dir>' joint dev false 0.25 false
-eval_batch_size=$1  # 64
-test_questions=$2  # webqsp_filtered/nq/graphqs_filtered
+# bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
+test_questions=$1  # webqsp_filtered/nq/graphqs_filtered
+subset=$2  # test/dev/train_only
 model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
 ner=$4  # joint/qa_classifier/ngram/single/flair
-subset=$5  # test/dev/train_only
-debug=$6  # "true"/<anything other than "true"> (does debug_cross)
-qa_classifier_threshold=$7  # 0
-gpu=$8  # true/false
+mention_classifier_threshold=$5  # 0.25
+top_k=$6  # 100
+final_thresholding=$7  # top_joint_by_mention / top_entity_by_mention / joint_0
+eval_batch_size="64"  # 64
+debug="false"  # "true"/<anything other than "true"> (does debug_cross)
+gpu="false"
 
 export PYTHONPATH=.
 
@@ -62,14 +65,14 @@ fi
 
 if [ "${ner}" = "qa_classifier" ]
 then
-    qa_classifier_threshold_args="--qa_classifier_threshold ${qa_classifier_threshold}"
-    echo $qa_classifier_threshold_args
+    mention_classifier_threshold_args="--mention_classifier_threshold ${mention_classifier_threshold}"
+    echo $mention_classifier_threshold_args
 elif [ "${ner}" = "joint" ]
 then
-    qa_classifier_threshold_args="--qa_classifier_threshold ${qa_classifier_threshold}"
-    echo $qa_classifier_threshold_args
+    mention_classifier_threshold_args="--mention_classifier_threshold ${mention_classifier_threshold}"
+    echo $mention_classifier_threshold_args
 else
-    qa_classifier_threshold_args=""
+    mention_classifier_threshold_args=""
 fi
 
 if [ "${gpu}" = "false" ]
@@ -138,17 +141,15 @@ else
     debug=""
 fi
 
-command="python blink/main_dense.py -q ${debug} --fast \
+command="python blink/main_dense.py -q ${debug} \
     --test_mentions ${mentions_file} \
     --test_entities models/entity.jsonl \
     --entity_catalogue models/entity.jsonl \
     --entity_encoding ${entity_encoding} \
     --biencoder_model ${biencoder_model} \
     --biencoder_config ${biencoder_config} \
-    --crossencoder_model ${crossencoder_model} \
-    --crossencoder_config ${crossencoder_config} \
-    --save_preds_dir saved_preds/${test_questions}_${subset}_${model_full}_${ner}${qa_classifier_threshold} \
-    -n ${ner} ${qa_classifier_threshold_args} \
+    --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_${ner}${mention_classifier_threshold}_top${top_k}cands_final_${final_thresholding} \
+    -n ${ner} ${mention_classifier_threshold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
     --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args}"
     # --no_mention_bounds_biencoder --mention_aggregation_type all_avg"
     # --eval_main_entity
