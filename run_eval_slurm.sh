@@ -45,6 +45,11 @@ if [ "${eval_batch_size}" = "" ]
 then
     eval_batch_size="64"
 fi
+save_dir_batch=""
+if [ "${eval_batch_size}" = "1" ]
+then
+    save_dir_batch="_realtime_test"
+fi
 
 if [ "${test_questions}" = "webqsp_filtered" ]
 then
@@ -153,7 +158,7 @@ command="python blink/main_dense.py -q ${debug} \
     --entity_encoding ${entity_encoding} \
     --biencoder_model ${biencoder_model} \
     --biencoder_config ${biencoder_config} \
-    --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_${ner}${mention_classifier_threshold}_top${top_k}cands_final_${final_thresholding} \
+    --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_${ner}${mention_classifier_threshold}_top${top_k}cands_final_${final_thresholding}${save_dir_batch} \
     -n ${ner} ${mention_classifier_threshold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
     --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args}"
     # --no_mention_bounds_biencoder --mention_aggregation_type all_avg"
