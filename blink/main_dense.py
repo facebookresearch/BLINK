@@ -109,6 +109,15 @@ def _load_candidates(
 ):
     candidate_encoding = torch.load(entity_encoding)
     candidate_token_ids = torch.load(entity_token_ids)
+    if os.path.exists("models/title2id.json"):
+        title2id = json.load(open("models/title2id.json"))
+        id2title = json.load(open("models/id2title.json"))
+        id2text = json.load(open("models/id2text.json"))
+        kb2id = json.load(open("models/kb2id.json"))
+        id2kb = json.load(open("models/id2kb.json"))
+        wikipedia_id2local_id = json.load(open("models/wikipedia_id2local_id.json"))
+        return candidate_encoding, candidate_token_ids, title2id, id2title, id2text, wikipedia_id2local_id, kb2id, id2kb
+
     # load all the 5903527 entities
     title2id = {}
     id2title = {}
@@ -171,6 +180,13 @@ def _load_candidates(
         torch.save(candidate_encoding, "new_" + entity_encoding)
     if logger:
         logger.info("missing {}/{} wikidata IDs".format(missing_entity_ids, local_idx))
+
+    json.dump(title2id, open("models/title2id.json", "w"))
+    json.dump(id2title, open("models/id2title.json", "w"))
+    json.dump(id2text, open("models/id2text.json", "w"))
+    json.dump(kb2id, open("models/kb2id.json", "w"))
+    json.dump(id2kb, open("models/id2kb.json", "w"))
+    json.dump(wikipedia_id2local_id, open("models/wikipedia_id2local_id.json", "w"))
     return candidate_encoding, candidate_token_ids, title2id, id2title, id2text, wikipedia_id2local_id, kb2id, id2kb
 
 
@@ -612,11 +628,13 @@ def _run_biencoder(
                 # 2nd part of OR for if nothing is > 0
                 mention_pos_2 = torch.stack([torch.arange(mention_pos_2.size(0)).unsqueeze(-1).expand_as(mention_pos_2), mention_pos_2], dim=-1)
                 mention_pos_2_mask = torch.sigmoid(top_mention_logits) >= mention_classifier_threshold
+                # [overall mentions, 2]
                 mention_pos_2 = mention_pos_2[mention_pos_2_mask | (mention_pos_2_mask.sum(1) == 0).unsqueeze(-1)]
                 mention_pos_2 = mention_pos_2.view(-1, 2)
                 # end_time_2 = time.time()
                 # print(end_time - start_time)
                 # print(end_time_2 - end_time)
+                # tuples of (instance in batch, mention id) of what to include
                 mention_pos = mention_pos_2
                 # TODO MAYBE TOP K HERE??
                 # '''
@@ -624,7 +642,7 @@ def _run_biencoder(
                 # mention_pos_mask = torch.sigmoid(mention_logits) > 0.25
                 # reshape back to (bs, num_mentions) mask
                 mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
-                mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
+                mention_pos_mask[mention_pos_2[:,0], mention_pos_2[:,1]] = 1
                 # (bs, num_mentions, 2)
                 mention_idxs = mention_bounds.clone()
                 mention_idxs[~mention_pos_mask] = 0
@@ -640,24 +658,30 @@ def _run_biencoder(
 
                 # DIM (num_total_mentions, num_candidates)
                 # TODO search for topK entities with FAISS
-                start_time = time.time()
+                # start_time = time.time()
                 if embedding_ctxt.size(0) > 1:
                     cand_scores = embedding_ctxt.squeeze(0).mm(candidate_encoding.to(device).t())
                 else:
                     cand_scores = embedding_ctxt.mm(candidate_encoding.to(device).t())
-                end_time = time.time()
-                cand_scores = torch.log_softmax(softmax_time, 1)
+                # end_time = time.time()
+                # cand_scores = torch.log_softmax(cand_scores, 1)
                 softmax_time = time.time()
-                cand_scores, cand_idxs = cand_scores.topk(20)  # TODO DELETE
-                cand_scores = torch.log_softmax(cand_scores, 1)
+                cand_dist, cand_indices = cand_scores.topk(10)  # TODO DELETE
+                top_time = time.time()
+                cand_scores = torch.log_softmax(cand_dist, 1)
                 # back into (num_total_mentions, num_candidates)
-                cand_scores_reconstruct = torch.ones(embedding_ctxt.size(0), candidate_encoding.size(0), dtype=cand_scores.dtype).to(cand_scores.device) * -float("inf")
-                # # DIM (bs, max_pred_mentions, num_candidates)
-                cand_scores_reconstruct[torch.arange(cand_scores_reconstruct.size(0)).unsqueeze(-1), cand_idxs] = cand_scores
-                cand_scores = cand_scores_reconstruct
-                reconstruct_time = time.time()
-                print(softmax_time - end_time)
-                print(reconstruct_time - softmax_time)
+                soft_time = time.time()
+                # cand_scores_reconstruct = torch.ones(embedding_ctxt.size(0), candidate_encoding.size(0), dtype=cand_scores.dtype).to(cand_scores.device) * -float("inf")
+                # # # DIM (bs, max_pred_mentions, num_candidates)
+                # cand_scores_reconstruct[torch.arange(cand_scores_reconstruct.size(0)).unsqueeze(-1), cand_indices] = cand_scores
+                # reconstruct_time = time.time()
+                # cand_scores = cand_scores_reconstruct
+                # print(top_time - softmax_time)
+                # print(soft_time - top_time)
+                # print(reconstruct_time - soft_time)
+                # reconstruct_time = time.time()
+                # print(softmax_time - end_time)
+                # print(reconstruct_time - softmax_time)
 
                 # scores = F.log_softmax(cand_scores, dim=-1)
                 # softmax_time = time.time()
@@ -740,8 +764,11 @@ def _run_biencoder(
                     ctxt_idx += 1
                 sample_idx += 1
 
-        dist, indices = scores.topk(20)
-        # cand_dist, cand_indices = cand_scores.topk(20)
+        # TODO DEAL WITH NANS
+        dist, indices = scores.sort()
+        # cand_indices[i, indices[i]]
+        indices = torch.gather(cand_indices, 1, indices)
+        # cand_dist, cand_indices = cand_scores.topk(10)
         labels.extend(label_ids.data.numpy())
         context_inputs.extend(context_input.data.numpy())
         nns.extend(indices.data.cpu().numpy())

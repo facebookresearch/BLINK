@@ -172,7 +172,7 @@ class MentionScoresHead(nn.Module):
 
             # Remove invalids (startpos > endpos, endpos > seqlen) and renormalize
             # DIM: (bs, starts, ends)
-            valid_mask = (mention_sizes.unsqueeze(0) >=0) & mask_ctxt.unsqueeze(1)
+            valid_mask = (mention_sizes.unsqueeze(0) > 0) & mask_ctxt.unsqueeze(1)
             # DIM: (bs, starts, ends)
             mention_scores[~valid_mask] = -float("inf")  # invalids have logprob=-inf (p=0)
             # DIM: (bs, starts * ends)
