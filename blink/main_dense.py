@@ -28,9 +28,9 @@ from blink.biencoder.data_process import (
 import blink.candidate_ranking.utils as utils
 import math
 
-import vcg_utils
-from vcg_utils.mention_extraction import extract_entities
-from vcg_utils.measures import entity_linking_tp_with_overlap
+import blink.vcg_utils
+from blink.vcg_utils.mention_extraction import extract_entities
+from blink.vcg_utils.measures import entity_linking_tp_with_overlap
 
 import os
 import sys
@@ -511,6 +511,7 @@ def _run_biencoder(
     top_k=100, device="cpu", jointly_extract_mentions=False,
     sample_to_all_context_inputs=None, num_mentions=10,  # TODO don't hardcode
     mention_classifier_threshold=0.25,
+    cand_encs_flat_index=None,
 ):
     # TODO DELETE THIS
     # cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
@@ -537,6 +538,8 @@ def _run_biencoder(
     context_inputs = []
     nns = []
     dists = []
+    mention_dists = []
+    cand_dists = []
     sample_idx = 0
     ctxt_idx = 0
     new_samples = samples
@@ -594,7 +597,30 @@ def _run_biencoder(
                 # # DIM (bsz * K)
                 # topK_mention_scores_flattened = topK_mention_scores.flatten()
 
-                mention_pos = (torch.sigmoid(mention_logits) >= mention_classifier_threshold).nonzero()
+                '''
+                topK_mention_scores, mention_pos = torch.cat([torch.arange(), mention_logits.topk(top_k, dim=1)])
+                mention_pos = mention_pos.flatten()
+                '''
+                # DIM (num_total_mentions, embed_dim)
+                # mention_pos = (torch.sigmoid(mention_logits) >= mention_classifier_threshold).nonzero()
+                # import pdb
+                # pdb.set_trace()
+                # start_time = time.time()
+                # mention_pos = (torch.sigmoid(mention_logits) >= 0.2).nonzero()
+                # end_time = time.time()
+                top_mention_logits, mention_pos_2 = mention_logits.topk(top_k)
+                # 2nd part of OR for if nothing is > 0
+                mention_pos_2 = torch.stack([torch.arange(mention_pos_2.size(0)).unsqueeze(-1).expand_as(mention_pos_2), mention_pos_2], dim=-1)
+                mention_pos_2_mask = torch.sigmoid(top_mention_logits) >= mention_classifier_threshold
+                mention_pos_2 = mention_pos_2[mention_pos_2_mask | (mention_pos_2_mask.sum(1) == 0).unsqueeze(-1)]
+                mention_pos_2 = mention_pos_2.view(-1, 2)
+                # end_time_2 = time.time()
+                # print(end_time - start_time)
+                # print(end_time_2 - end_time)
+                mention_pos = mention_pos_2
+                # TODO MAYBE TOP K HERE??
+                # '''
+
                 # mention_pos_mask = torch.sigmoid(mention_logits) > 0.25
                 # reshape back to (bs, num_mentions) mask
                 mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
@@ -613,32 +639,75 @@ def _run_biencoder(
                 mention_idxs = mention_idxs[mention_pos_mask]
 
                 # DIM (num_total_mentions, num_candidates)
-                scores = embedding_ctxt.squeeze(0).mm(candidate_encoding.to(device).t())
+                # TODO search for topK entities with FAISS
+                start_time = time.time()
+                if embedding_ctxt.size(0) > 1:
+                    cand_scores = embedding_ctxt.squeeze(0).mm(candidate_encoding.to(device).t())
+                else:
+                    cand_scores = embedding_ctxt.mm(candidate_encoding.to(device).t())
+                end_time = time.time()
+                cand_scores = torch.log_softmax(softmax_time, 1)
+                softmax_time = time.time()
+                cand_scores, cand_idxs = cand_scores.topk(20)  # TODO DELETE
+                cand_scores = torch.log_softmax(cand_scores, 1)
+                # back into (num_total_mentions, num_candidates)
+                cand_scores_reconstruct = torch.ones(embedding_ctxt.size(0), candidate_encoding.size(0), dtype=cand_scores.dtype).to(cand_scores.device) * -float("inf")
+                # # DIM (bs, max_pred_mentions, num_candidates)
+                cand_scores_reconstruct[torch.arange(cand_scores_reconstruct.size(0)).unsqueeze(-1), cand_idxs] = cand_scores
+                cand_scores = cand_scores_reconstruct
+                reconstruct_time = time.time()
+                print(softmax_time - end_time)
+                print(reconstruct_time - softmax_time)
+
+                # scores = F.log_softmax(cand_scores, dim=-1)
+                # softmax_time = time.time()
+                # cand_scores, _ = cand_encs_flat_index.search(embedding_ctxt.contiguous().detach().cpu().numpy(), top_k)
+                # cand_scores = torch.tensor(cand_scores)
+                # # reconstruct cand_scores to (bs, num_candidates)
+                # faiss_time = time.time()
+                # print(end_time - start_time)
+                # print(softmax_time - end_time)
+                # print(faiss_time - softmax_time)
                 # DIM (num_total_mentions, num_candidates)
-                scores = F.log_softmax(scores, dim=-1)
                 if args.final_thresholding != "top_entity_by_mention":
                     # DIM (num_total_mentions, num_candidates)
                     # log p(entity && mb) = log [p(entity|mention bounds) * p(mention bounds)] = log p(e|mb) + log p(mb)
-                    scores += F.sigmoid(mention_logits)[mention_pos_mask].unsqueeze(-1)
+                    # scores += torch.sigmoid(mention_logits)[mention_pos_mask].unsqueeze(-1)
+                    mention_scores = mention_logits[mention_pos_mask].unsqueeze(-1)
+                # DIM (num_total_mentions, num_candidates)
+                # scores = torch.log_softmax(cand_scores, 1) + torch.sigmoid(mention_scores)
+                scores = cand_scores + torch.sigmoid(mention_scores)
+                # import pdb
+                # pdb.set_trace()
+                mention_scores = mention_scores.expand_as(cand_scores)
 
-                # DIM (bs, max_pred_mentions, num_candidates)
-                scores_reconstruct = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max(), scores.size(-1), dtype=scores.dtype).to(scores.device)
-                # DIM (bs, max_pred_mentions)
-                mention_pos_mask_reconstruct = torch.zeros(scores_reconstruct.size()[:2]).bool().to(scores_reconstruct.device)
-                for i in range(scores_reconstruct.size(1)):
+                # # DIM (bs, max_pred_mentions, num_candidates)
+                # scores_reconstruct = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max(), scores.size(-1), dtype=scores.dtype).to(scores.device)
+                # # DIM (bs, max_pred_mentions)
+                mention_pos_mask_reconstruct = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max()).bool().to(mention_pos_mask.device)
+                for i in range(mention_pos_mask_reconstruct.size(1)):
                     mention_pos_mask_reconstruct[:, i] = i < mention_pos_mask.sum(1)
-                # DIM (bs, max_pred_mentions, num_candidates)
-                scores_reconstruct[mention_pos_mask_reconstruct] = scores
-                scores = scores_reconstruct
+                # # DIM (bs, max_pred_mentions, num_candidates)
+                # scores_reconstruct[mention_pos_mask_reconstruct] = scores
+                # scores = scores_reconstruct
+
+                # # DIM (bs, max_pred_mentions, num_candidates)
+                # cand_scores_reconstruct = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max(), scores.size(-1), dtype=scores.dtype).to(scores.device)
+                # # DIM (bs, max_pred_mentions, num_candidates)
+                # cand_scores_reconstruct[mention_pos_mask_reconstruct] = cand_scores
+                # cand_scores = cand_scores_reconstruct
+
                 # DIM (bs, max_pred_mentions, 2)
-                chosen_mention_bounds = torch.zeros(scores.size(0), scores.size(1), 2, dtype=mention_idxs.dtype).to(scores_reconstruct.device)
+                chosen_mention_bounds = torch.zeros(mention_pos_mask.size(0),  mention_pos_mask.sum(1).max(), 2, dtype=mention_idxs.dtype).to(mention_idxs.device)
                 chosen_mention_bounds[mention_pos_mask_reconstruct] = mention_idxs
 
                 # mention_idxs = mention_idxs.view(topK_mention_bounds.size(0), topK_mention_bounds.size(1), 2)
                 # assert (mention_idxs == topK_mention_bounds).all()
 
                 # DIM (total_num_mentions, num_cands)
-                scores = scores[mention_pos_mask_reconstruct]
+                # scores = scores[mention_pos_mask_reconstruct]
+                # cand_scores = cand_scores[mention_pos_mask_reconstruct]
+                # mention_scores = scores - 0.4 * cand_scores - 0.9  # project to dimension of scores
 
                 # expand labels
                 # DIM (total_num_mentions, 1)
@@ -671,11 +740,13 @@ def _run_biencoder(
                     ctxt_idx += 1
                 sample_idx += 1
 
-        dist, indices = scores.topk(top_k)
+        dist, indices = scores.topk(20)
+        # cand_dist, cand_indices = cand_scores.topk(20)
         labels.extend(label_ids.data.numpy())
         context_inputs.extend(context_input.data.numpy())
         nns.extend(indices.data.cpu().numpy())
         dists.extend(dist.data.cpu().numpy())
+        cand_dists.extend(cand_dist.data.cpu().numpy())
         assert len(labels) == len(nns)
         assert len(labels) == len(dists)
         sys.stdout.write("{}/{} \r".format(step, len(dataloader)))
@@ -683,7 +754,7 @@ def _run_biencoder(
     if jointly_extract_mentions:
         assert sample_idx == len(new_sample_to_all_context_inputs)
         assert ctxt_idx == len(new_samples)
-    return labels, nns, dists, new_samples, new_sample_to_all_context_inputs
+    return labels, nns, dists, cand_dists, new_samples, new_sample_to_all_context_inputs
 
 
 def _decode_tokens(tokenizer, token_list):
@@ -969,14 +1040,32 @@ def run(
             # run biencoder
             logger.info("Running biencoder...")
 
+
+            # TODO DELETE THIS
+            # cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
+            # d = cand_encs_npy.shape[1]
+            # # nsplits = 100
+            # cand_encs_flat_index = faiss.IndexFlatIP(d)
+            # # cand_encs_quantizer = faiss.IndexFlatIP(d)
+            # # assert cand_encs_quantizer.is_trained
+            # # cand_encs_index = faiss.IndexIVFFlat(cand_encs_quantizer, d, nsplits, faiss.METRIC_INNER_PRODUCT)
+            # # assert not cand_encs_index.is_trained
+            # # cand_encs_index.train(cand_encs_npy)  # 15s
+            # # assert cand_encs_index.is_trained
+            # # cand_encs_index.add(cand_encs_npy)  # 41s
+            # cand_encs_flat_index.add(cand_encs_npy)
+            # # assert cand_encs_index.ntotal == cand_encs_npy.shape[0]
+            # assert cand_encs_flat_index.ntotal == cand_encs_npy.shape[0]
+
             start_time = time.time()
-            labels, nns, dists, new_samples, sample_to_all_context_inputs = _run_biencoder(
+            labels, nns, dists, cand_dists, new_samples, sample_to_all_context_inputs = _run_biencoder(
                 args, biencoder, dataloader, candidate_encoding, samples=samples,
                 top_k=args.top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
                 jointly_extract_mentions=(args.do_ner == "joint"),
                 sample_to_all_context_inputs=sample_to_all_context_inputs,
                 # num_mentions=int(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
                 mention_classifier_threshold=float(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
+                # cand_encs_flat_index=cand_encs_flat_index
             )
             end_time = time.time()
             logger.info("Finished running biencoder")
@@ -986,6 +1075,7 @@ def run(
             np.save(os.path.join(args.save_preds_dir, "biencoder_labels.npy"), labels)
             np.save(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), nns)
             np.save(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), dists)
+            np.save(os.path.join(args.save_preds_dir, "biencoder_cand_dists.npy"), cand_dists)
             json.dump(new_samples, open(os.path.join(args.save_preds_dir, "samples.json"), "w"))
             json.dump(sample_to_all_context_inputs, open(os.path.join(args.save_preds_dir, "sample_to_all_context_inputs.json"), "w"))
             with open(os.path.join(args.save_preds_dir, "runtime.txt"), "w") as wf:

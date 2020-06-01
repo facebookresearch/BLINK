@@ -30,7 +30,7 @@ ner=$4  # joint/qa_classifier/ngram/single/flair
 mention_classifier_threshold=$5  # 0.25
 top_k=$6  # 100
 final_thresholding=$7  # top_joint_by_mention / top_entity_by_mention / joint_0
-eval_batch_size="64"  # 64
+eval_batch_size=$8  # 64
 debug="false"  # "true"/<anything other than "true"> (does debug_cross)
 gpu="false"
 
@@ -40,6 +40,11 @@ IFS=';' read -ra MODEL_PARSE <<< "${model_full}"
 model=${MODEL_PARSE[0]}
 echo $model
 echo $model_full
+
+if [ "${eval_batch_size}" = "" ]
+then
+    eval_batch_size="64"
+fi
 
 if [ "${test_questions}" = "webqsp_filtered" ]
 then
