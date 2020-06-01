@@ -112,9 +112,12 @@ def _load_candidates(
     if os.path.exists("models/title2id.json"):
         title2id = json.load(open("models/title2id.json"))
         id2title = json.load(open("models/id2title.json"))
+        logger.info("Loaded titles")
         id2text = json.load(open("models/id2text.json"))
+        logger.info("Loaded texts")
         kb2id = json.load(open("models/kb2id.json"))
         id2kb = json.load(open("models/id2kb.json"))
+        logger.info("Loaded KBIDS")
         wikipedia_id2local_id = json.load(open("models/wikipedia_id2local_id.json"))
         return candidate_encoding, candidate_token_ids, title2id, id2title, id2text, wikipedia_id2local_id, kb2id, id2kb
 
@@ -764,8 +767,7 @@ def _run_biencoder(
                     ctxt_idx += 1
                 sample_idx += 1
 
-        # TODO DEAL WITH NANS
-        dist, indices = scores.sort()
+        dist, indices = scores.sort(descending=True)
         # cand_indices[i, indices[i]]
         indices = torch.gather(cand_indices, 1, indices)
         # cand_dist, cand_indices = cand_scores.topk(10)
@@ -1163,14 +1165,14 @@ def run(
                     entity_list = nns_merged[i]
                     if do_sort:
                         entity_list = entity_list.tolist()
-                        entity_list.sort(key=(lambda x: entity_freq_map.get(id2kb.get(x, ""), 0)), reverse=True)
+                        entity_list.sort(key=(lambda x: entity_freq_map.get(id2kb.get(id2kb.get(str(x), "")), 0)), reverse=True)
                     e_kbid = None
                     if len(entity_list) > 0:
                         e_id = entity_list[0]
-                        e_kbid = id2kb.get(e_id, "")
+                        e_kbid = id2kb.get(e_id, id2kb.get(str(e_id), ""))
                     pred_kbids_sorted = []
                     for all_id in entity_list:
-                        kbid = id2kb.get(all_id, "")
+                        kbid = id2kb.get(all_id, id2kb.get(str(all_id), ""))
                         pred_kbids_sorted.append(kbid)
                     label = labels_merged[i]
                     distances = dists_merged[i]

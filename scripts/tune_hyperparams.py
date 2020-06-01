@@ -20,7 +20,7 @@ SAVE_PREDS_DIR = "/checkpoint/belindali/entity_link/saved_preds/graphqs_filtered
 SAVE_PREDS_DIR = "/checkpoint/belindali/entity_link/saved_preds/graphqs_filtered_dev_finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear_joint0.35_top11cands_final_joint_0"
 SAVE_PREDS_DIR = "/checkpoint/belindali/entity_link/saved_preds/webqsp_filtered_dev_finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear_joint0.2_top6cands_final_joint_0"
 
-SAVE_PREDS_DIR = "/checkpoint/belindali/entity_link/saved_preds/webqsp_filtered_dev_finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear_joint0.2_top7cands_final_joint_0/"
+SAVE_PREDS_DIR = "/checkpoint/belindali/entity_link/saved_preds/webqsp_filtered_dev_finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear_joint0.2_top8cands_final_joint_0/"
 
 
 (dists, cand_dists, mention_dists, labels, nns, runtime, new_samples, sample_to_all_context_inputs, samples_all) = load_files(SAVE_PREDS_DIR)
@@ -248,7 +248,11 @@ def _combine_same_inputs_diff_mention_bounds(samples, labels, nns, dists, sample
             all_distances = np.concatenate([dists[dists_idx + j] for j in range(len(context_input_idxs))], axis=-1)
             all_cand_outputs = np.concatenate([nns[context_input_idxs[j]] for j in range(len(context_input_idxs))], axis=-1)
             dist_sort_idx = np.argsort(-all_distances)  # get in descending order
-            nns_merged.append(all_cand_outputs[dist_sort_idx])
+            try:
+                nns_merged.append(all_cand_outputs[dist_sort_idx])
+            except:
+                import pdb
+                pdb.set_trace()
             dists_merged.append(all_distances[dist_sort_idx])
             # selected_mention_idx
             # [0,len(dists[0])-1], [len(dists[0]),2*len(dists[0])-1], etc. same range all refer to same mention
