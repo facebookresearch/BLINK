@@ -45,6 +45,12 @@
 # sbatch examples/train_biencoder.sh pretrain none both 128 <true/false> 0
 # sbatch examples/train_biencoder.sh pretrain none predict 512 <true/false> 0
 # sbatch examples/train_biencoder.sh webqsp none train 64 false 16
+
+# sbatch examples/train_biencoder.sh webqsp_all_ents all_avg train 128 true 20 true true large qa_linear
+# sbatch examples/train_biencoder.sh webqsp_all_ents all_avg train 128 true 20 true false large qa_linear
+#    ^ ADVERSARIAL ABLATE
+# sbatch examples/train_biencoder.sh webqsp_all_ents all_avg train 128 true 20 false false large qa_linear
+#    ^ CAND ENC ABLATE
 data=$1  # webqsp_all_ents/graphqs_all_ents/zeshel/pretrain
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none/none_no_mentions
 objective=$3  # train/predict/both (default)
@@ -52,11 +58,12 @@ batch_size=$4  # 128 (for pretraining large model / 128 seqlen) / 32 (for finetu
 joint_mention_detection=$5  # "true"/false
 context_length=$6  # 128/20 (smallest)
 load_saved_cand_encs=$7  # true/false
-model_size=$8  # large/base/medium/small/mini/tiny
-mention_scoring_method=$9  # qa_linear/qa_mlp
-chunk_start=${10}
-chunk_end=${11}
-epoch=${12}
+adversarial=$8
+model_size=$9  # large/base/medium/small/mini/tiny
+mention_scoring_method=${10}  # qa_linear/qa_mlp
+chunk_start=${11}
+chunk_end=${12}
+epoch=${13}
 
 
 echo $3
@@ -98,10 +105,16 @@ then
   all_mention_args="${all_mention_args} --do_mention_detection"
 fi
 
+cand_enc_args=""
 if [ "${load_saved_cand_encs}" = "true" ]
 then
   echo "loading + freezing saved candidate encodings"
-  cand_enc_args="--freeze_cand_enc --load_cand_enc_only --adversarial_training"
+  cand_enc_args="--freeze_cand_enc --load_cand_enc_only ${cand_enc_args}"
+fi
+
+if [ "${adversarial}" = "true" ]
+then
+  cand_enc_args="--adversarial_training ${cand_enc_args}"
 fi
 
 if [ "${objective}" = "" ]
