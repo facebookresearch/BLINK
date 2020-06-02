@@ -504,14 +504,17 @@ def main(params):
                 cand_encs_input = torch.cat([
                     pos_cand_encs_input, neg_cand_encs_input,
                 ]).to(device)
+                mention_idx_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
             
+            import pdb
+            pdb.set_trace()
             loss, _ = reranker(
                 context_input, candidate_input,
                 cand_encs=cand_encs_input, text_encs=mention_reps_input,
                 mention_logits=mention_logits, mention_bounds=mention_bounds,
                 label_input=label_input, gold_mention_idxs=mention_idxs,
                 gold_mention_idx_mask=mention_idx_mask,
-                all_inputs_mask=torch.cat([mention_idx_mask, neg_mention_idx_mask]),
+                all_inputs_mask=mention_idx_mask,
             )
             if params["debug"] and params["adversarial_training"]:
                 D, _ = cand_encs_index.search(mention_reps.detach().cpu().numpy(), num_neighbors)
