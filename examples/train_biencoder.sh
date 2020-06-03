@@ -150,7 +150,7 @@ then
     then
       batch_size="128"
     fi
-    output_path="experiments/pretrain/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_bert_${output_path_model_size}_${mention_scoring_method}"
+    output_path="experiments/pretrain/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
     if [ "${epoch}" != "-1" ]
     then
       model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
@@ -183,7 +183,8 @@ then
       batch_size="32"
     fi
     #--load_cand_enc_only \
-    output_path="experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_bert_${output_path_model_size}_${mention_scoring_method}"
+    model_path_arg=""
+    output_path="experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
     if [ "${epoch}" != "-1" ]
     then
       model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
@@ -192,11 +193,15 @@ then
         cand_enc_args="--freeze_cand_enc --adversarial_training"
       fi
     else
-      model_path_arg="--path_to_model /private/home/ledell/BLINK-Internal/models/biencoder_wiki_large.bin"
+      if [ "${load_saved_cand_encs}" = "true" ]
+      then
+        model_path_arg="--path_to_model /private/home/ledell/BLINK-Internal/models/biencoder_wiki_large.bin"
+      fi
     fi
+    #  --freeze_cand_enc 
     cmd="python blink/biencoder/train_biencoder.py \
       --output_path $output_path \
-      ${model_path_arg} --freeze_cand_enc  ${cand_enc_args} \
+      ${model_path_arg} ${cand_enc_args} \
       --no_cached_representation --dont_distribute_train_samples \
       --data_path ${data_path} \
       --num_train_epochs 100 \

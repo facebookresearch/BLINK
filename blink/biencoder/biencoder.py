@@ -567,11 +567,11 @@ class BiEncoderRanker(torch.nn.Module):
                 None, None, None,
                 gold_mention_idxs=gold_mention_idxs,
             )
-            if not gold_mention_idxs:
+            if gold_mention_idxs is not None:
                 # TODO reshape embedding_ctxt...
-                mention_pos = (torch.sigmoid(mention_logits) >= topK_threshold).nonzero()
-                import pdb
-                pdb.set_trace()
+                # mention_pos = (torch.sigmoid(mention_logits) >= topK_threshold).nonzero()
+                # (bs * num_mentions, embed_size)
+                embedding_ctxt = embedding_ctxt.view(-1, embedding_ctxt.size(-1))
         else:
             # Context encoding is given, do not need to re-compute
             embedding_ctxt = text_encs
@@ -600,17 +600,35 @@ class BiEncoderRanker(torch.nn.Module):
                 scores = torch.squeeze(scores)
                 return scores, mention_logits, mention_bounds
 
+        # cand_vecs: (bs, num_gold_mentions, 1, cand_width) -> (bs * num_gold_mentions, cand_width)
+        cand_vecs = cand_vecs.view(-1, cand_vecs.size(-2), cand_vecs.size(-1)).squeeze(1)
         # Train time. We compare with all elements of the batch
         token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
             cand_vecs, self.NULL_IDX
         )
+        # embedding_cands: (bs * num_gold_mentions, embed_dim)
         _, embedding_cands, _, _ = self.model(
             None, None, None,
             token_idx_cands, segment_idx_cands, mask_cands
         )
         if random_negs:
-            # train on random negatives (returns batchsize x batchsize of scores)
-            return embedding_ctxt.mm(embedding_cands.t()), mention_logits, mention_bounds
+            # if gold_mention_idxs is not None:
+            if all_inputs_mask is None:
+                all_inputs_mask = gold_mention_idx_mask
+            # (bs x num_tot_mentions, embed_size)
+            embedding_ctxt = embedding_ctxt.view(-1, embedding_ctxt.size(-1))
+            # if all_inputs_mask is not None:
+            #     # (bs * num_mentions, embed_size)
+            #     embedding_ctxt = embedding_ctxt[all_inputs_mask.flatten()]
+            #     # (bs * num_mentions, )
+            #     embedding_cands = embedding_cands.view(-1, embedding_cands.size(-1))[all_inputs_mask.flatten()]
+            #     # candidates and embedding contexts correspond
+
+            # train on random negatives (returns bs*num_mentions x bs*num_mentions of scores)
+            all_scores = embedding_ctxt[all_inputs_mask.flatten()].mm(embedding_cands[all_inputs_mask.flatten()].t())
+            # scores_mask = all_inputs_mask.flatten() & all_inputs_mask.flatten().unsqueeze(-1)
+            # all_scores[~scores_mask] = -float("inf")
+            return all_scores, mention_logits, mention_bounds
         else:
             # train on hard negatives (returns batchsize x 1 of scores)
             embedding_ctxt = embedding_ctxt.unsqueeze(1)  # batchsize x 1 x embed_size
@@ -668,15 +686,18 @@ class BiEncoderRanker(torch.nn.Module):
                 N=N, M=M,
             )
 
-        # scores: (bs, num_spans, all_embeds)
         bs = context_input.size(0)
         # TODO modify target to *correct* label (pass in a label_input???)
         if label_input is None:
+            # scores: (bs*num_mentions, bs*num_mentions)
+            scores_mask = all_inputs_mask.flatten() & all_inputs_mask.flatten().unsqueeze(-1)
+            all_scores[~scores_mask] = -float("inf")
             target = torch.LongTensor(torch.arange(bs))
             target = target.to(self.device)
             # log P(entity|mention) + log P(mention) = log [P(entity|mention)P(mention)]
             loss = F.cross_entropy(scores, target, reduction="mean") + span_loss
         else:
+            # scores: (bs, num_spans, all_embeds)
             if flag:
                 all_inputs_mask = gold_mention_idx_mask
             loss_fct = nn.BCEWithLogitsLoss(reduction="mean")

@@ -130,21 +130,19 @@ def evaluate(
                 tmp_num_r += float(mention_idx_mask.sum())
                 # reranker.tokenizer.decode(context_input[0].tolist())
             else:
-                import pdb
-                pdb.set_trace()
+                if mention_idxs is None:
+                    mention_idx_mask = None
                 logits, mention_logits, mention_bounds = reranker(
                     context_input, candidate_input,
                     cand_encs=cand_encs,# label_input=label_ids,
-                    gold_mention_idxs=mention_idxs,
-                    gold_mention_idx_mask=mention_idx_mask,
+                    gold_mention_idxs=batch[-2],
+                    gold_mention_idx_mask=batch[-1],
                     return_loss=False,
                 )
 
                 logits = logits.detach().cpu().numpy()
                 # Using in-batch negatives, the label ids are diagonal
-                label_ids = torch.LongTensor(
-                    torch.arange(params["eval_batch_size"])
-                ).unsqueeze(-1)
+                label_ids = torch.LongTensor(torch.arange(logits.shape[0]))#.unsqueeze(-1)
                 label_ids = label_ids.detach().cpu().numpy()
                 tmp_eval_accuracy = utils.accuracy(logits, label_ids)
                 tmp_num_p = 0.0
@@ -261,6 +259,7 @@ def main(params):
         tokenized_contexts_dir = os.path.join("/private/home/belindali/BLINK/models/tokenized_contexts/", params["data_path"].split('/')[-1]) # TODO DONT HARDCODE THESE PATHS
 
     cand_encs = None
+    cand_encs_flat_index = None
     if params["freeze_cand_enc"]:
         cand_encs = torch.load("/private/home/belindali/BLINK/models/all_entities_large.t7")  # TODO DONT HARDCODE THESE PATHS
         cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
