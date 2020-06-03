@@ -171,7 +171,7 @@ then
       --last_epoch ${epoch} ${model_path_arg} \
       --max_context_length ${context_length} \
       --mention_scoring_method ${mention_scoring_method} \
-      --data_parallel"
+      --data_parallel --get_losses"
       # --adversarial_training
       # --debug
       # --start_idx ${chunk_start} --end_idx ${chunk_end}   # TODO DELETE THIS LATER!!!!!
@@ -214,7 +214,7 @@ then
       --mention_scoring_method ${mention_scoring_method} \
       --eval_interval 500 \
       --last_epoch ${epoch} \
-      ${all_mention_args} --data_parallel"  #--debug  #
+      ${all_mention_args} --data_parallel --get_losses"  #--debug  #
       # --adversarial_training
     echo $cmd
     $cmd

@@ -546,8 +546,6 @@ class BiEncoderRanker(torch.nn.Module):
         all_inputs_mask=None,
         topK_threshold=0.15,
     ):
-        # import pdb
-        # pdb.set_trace()
         if not random_negs:
             assert all_inputs_mask is not None
         if text_encs is None or (
@@ -580,11 +578,16 @@ class BiEncoderRanker(torch.nn.Module):
         # Directly return the score of context encoding and candidate encoding
         if cand_encs is not None:
             if gold_mention_idxs is not None:
+                if embedding_ctxt.size(1) != gold_mention_idxs.size(1):
+                    # (bs, #_gold_mentions, embed_dim)
+                    try:
+                        embedding_ctxt = self.model.module.classification_heads['get_context_embeds'](embedding_ctxt, gold_mention_idxs)
+                    except:
+                        embedding_ctxt = self.model.classification_heads['get_context_embeds'](embedding_ctxt, gold_mention_idxs)
                 if all_inputs_mask is None:
                     all_inputs_mask = gold_mention_idx_mask
                 # (bs * num_mentions, embed_size)
                 embedding_ctxt = embedding_ctxt.view(-1, embedding_ctxt.size(-1))[all_inputs_mask.flatten()]
-                cand_encs = cand_encs.view(-1, cand_encs.size(-1))[all_inputs_mask.flatten()]
                 # candidates and embedding contexts correspond
             else:
                 # TODO
@@ -594,6 +597,8 @@ class BiEncoderRanker(torch.nn.Module):
                 # matmul across all cand_encs
                 return embedding_ctxt.mm(cand_encs.t()), mention_logits, mention_bounds
             else:
+                # (bs * num_mentions, embed_size)
+                cand_encs = cand_encs.view(-1, cand_encs.size(-1))[all_inputs_mask.flatten()]
                 embedding_ctxt = embedding_ctxt.unsqueeze(1)  # (batchsize * num_mentions) x 1 x embed_size
                 cand_encs = cand_encs.unsqueeze(2)  # (batchsize * num_mentions) x embed_size x 1
                 scores = torch.bmm(embedding_ctxt, cand_encs)  # (batchsize * num_mentions) x 1 x 1
@@ -695,14 +700,10 @@ class BiEncoderRanker(torch.nn.Module):
             # log P(entity|mention) + log P(mention) = log [P(entity|mention)P(mention)]
             loss = F.cross_entropy(scores, target, reduction="mean") + span_loss
         else:
-            # SHOULD NOT HAPPEN
-            import pdb
-            pdb.set_trace()
             # scores: (bs, num_spans, all_embeds)
             if flag:
                 all_inputs_mask = gold_mention_idx_mask
             loss_fct = nn.BCEWithLogitsLoss(reduction="mean")
-            # TODO: add parameters?
             # scores: ([masked] bs * num_spans), label_input: ([masked] bs * num_spans)
             label_input = label_input.flatten()[all_inputs_mask.flatten()]
             loss = loss_fct(scores, label_input.float()) + span_loss

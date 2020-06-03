@@ -321,6 +321,12 @@ class BlinkParser(argparse.ArgumentParser):
             action="store_true",
             help="Do adversarial training (only takes effect if `freeze_cand_enc` is set)",
         )
+        parser.add_argument(
+            "--get_losses",
+            default=False,
+            action="store_true",
+            help="Get losses during evaluation",
+        )
 
     def add_eval_args(self, args=None):
         """

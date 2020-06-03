@@ -48,6 +48,7 @@ np.random.seed(1234)  # reproducible for FAISS indexer
 def evaluate(
     reranker, eval_dataloader, params, device, logger,
     cand_encs=None, faiss_index=None, joint_mention_detection=True,
+    get_losses=False,
 ):
     reranker.model.eval()
     if params["silent"]:
@@ -62,6 +63,7 @@ def evaluate(
     eval_num_r = 0.0
     nb_eval_examples = 0
     nb_eval_steps = 0
+    overall_loss = 0.0
 
     if cand_encs is not None and not params["freeze_cand_enc"]:
         torch.cuda.empty_cache()
@@ -86,7 +88,7 @@ def evaluate(
                 mention_idxs = None
             else:
                 mention_idxs = batch[-2]
-            mention_idx_mask = batch[-1]
+            mention_idx_mask = batch[-1].clone()
 
             if params["freeze_cand_enc"]:
                 # get mention encoding
@@ -129,9 +131,12 @@ def evaluate(
                     tmp_num_p += float(len(ex))
                 tmp_num_r += float(mention_idx_mask.sum())
                 # reranker.tokenizer.decode(context_input[0].tolist())
+                # either (bs, num_TOTAL_mentions (unmasked), embed_size) OR (bs, num_gold_mentions, embed_size)
+                text_encs = reranker.model.module.classification_heads['get_context_embeds'](embedding_context, batch[-2])
             else:
                 if mention_idxs is None:
                     mention_idx_mask = None
+                embedding_context = None
                 logits, mention_logits, mention_bounds = reranker(
                     context_input, candidate_input,
                     cand_encs=cand_encs,# label_input=label_ids,
@@ -139,7 +144,6 @@ def evaluate(
                     gold_mention_idx_mask=batch[-1],
                     return_loss=False,
                 )
-
                 logits = logits.detach().cpu().numpy()
                 # Using in-batch negatives, the label ids are diagonal
                 label_ids = torch.LongTensor(torch.arange(logits.shape[0]))#.unsqueeze(-1)
@@ -147,6 +151,18 @@ def evaluate(
                 tmp_eval_accuracy = utils.accuracy(logits, label_ids)
                 tmp_num_p = 0.0
                 tmp_num_r = 0.0
+                text_encs = None
+
+            loss, _ = reranker(
+                context_input, candidate_input,
+                text_encs=text_encs,
+                gold_mention_idxs=batch[-2],
+                gold_mention_idx_mask=batch[-1],
+                return_loss=True,
+                # all_inputs_mask=batch[-1],
+            )
+
+            overall_loss += loss
 
         eval_accuracy += tmp_eval_accuracy
         eval_num_p += tmp_num_p
@@ -160,6 +176,7 @@ def evaluate(
         torch.cuda.empty_cache()
 
     normalized_eval_accuracy = eval_accuracy / nb_eval_examples
+    normalized_overall_loss = overall_loss / nb_eval_steps
     if eval_num_p > 0:
         normalized_eval_p = eval_accuracy / eval_num_p
     else:
@@ -168,6 +185,7 @@ def evaluate(
         normalized_eval_r = eval_accuracy / eval_num_r
     else:
         normalized_eval_r = 0.0
+    logger.info("Overall loss: %.5f" % overall_loss)
     logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
     logger.info("Precision: %.5f" % normalized_eval_p)
     logger.info("Recall: %.5f" % normalized_eval_r)
@@ -429,6 +447,7 @@ def main(params):
             mention_reps_input = None
             mention_logits = None
             mention_bounds = None
+            all_inputs_mask = mention_idx_mask
             if params["adversarial_training"]:
                 cand_encs_index.nprobe = 20
                 assert cand_encs is not None and label_ids is not None  # due to params["freeze_cand_enc"] being set
@@ -503,7 +522,7 @@ def main(params):
                 cand_encs_input = torch.cat([
                     pos_cand_encs_input, neg_cand_encs_input,
                 ]).to(device)
-                mention_idx_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
+                all_inputs_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
             
             loss, _ = reranker(
                 context_input, candidate_input,
@@ -511,7 +530,7 @@ def main(params):
                 mention_logits=mention_logits, mention_bounds=mention_bounds,
                 label_input=label_input, gold_mention_idxs=mention_idxs,
                 gold_mention_idx_mask=mention_idx_mask,
-                all_inputs_mask=mention_idx_mask,
+                all_inputs_mask=all_inputs_mask,
             )
             if params["debug"] and params["adversarial_training"]:
                 D, _ = cand_encs_index.search(mention_reps.detach().cpu().numpy(), num_neighbors)
@@ -566,6 +585,7 @@ def main(params):
                     reranker, valid_dataloader, params,
                     cand_encs=cand_encs, device=device,
                     logger=logger, faiss_index=cand_encs_flat_index,
+                    get_losses=params["get_losses"],
                 )
                 model.train()
                 logger.info("\n")
@@ -593,6 +613,7 @@ def main(params):
             reranker, valid_dataloader, params,
             cand_encs=cand_encs, device=device,
             logger=logger, faiss_index=cand_encs_flat_index,
+            get_losses=params["get_losses"],
         )
         logger.info("Valid data evaluation -- non-end2end")
         results = evaluate(
@@ -600,12 +621,14 @@ def main(params):
             cand_encs=cand_encs, device=device,
             logger=logger, faiss_index=cand_encs_flat_index,
             joint_mention_detection=False,
+            get_losses=params["get_losses"],
         )
         logger.info("Train data evaluation")
         results = evaluate(
             reranker, train_dataloader, params,
             cand_encs=cand_encs, device=device,
             logger=logger, faiss_index=cand_encs_flat_index,
+            get_losses=params["get_losses"],
         )
 
         ls = [best_score, results["normalized_accuracy"]]
