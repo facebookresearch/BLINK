@@ -505,8 +505,6 @@ def main(params):
                 ]).to(device)
                 mention_idx_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
             
-            import pdb
-            pdb.set_trace()
             loss, _ = reranker(
                 context_input, candidate_input,
                 cand_encs=cand_encs_input, text_encs=mention_reps_input,

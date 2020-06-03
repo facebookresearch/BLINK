@@ -689,14 +689,15 @@ class BiEncoderRanker(torch.nn.Module):
         bs = context_input.size(0)
         # TODO modify target to *correct* label (pass in a label_input???)
         if label_input is None:
-            # scores: (bs*num_mentions, bs*num_mentions)
-            scores_mask = all_inputs_mask.flatten() & all_inputs_mask.flatten().unsqueeze(-1)
-            all_scores[~scores_mask] = -float("inf")
-            target = torch.LongTensor(torch.arange(bs))
+            # scores: (bs*num_mentions [filtered], bs*num_mentions [filtered])
+            target = torch.LongTensor(torch.arange(scores.size(1)))
             target = target.to(self.device)
             # log P(entity|mention) + log P(mention) = log [P(entity|mention)P(mention)]
             loss = F.cross_entropy(scores, target, reduction="mean") + span_loss
         else:
+            # SHOULD NOT HAPPEN
+            import pdb
+            pdb.set_trace()
             # scores: (bs, num_spans, all_embeds)
             if flag:
                 all_inputs_mask = gold_mention_idx_mask
