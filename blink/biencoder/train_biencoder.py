@@ -130,9 +130,7 @@ def evaluate(
                             seen_ex[j] = 0
                     tmp_num_p += float(len(ex))
                 tmp_num_r += float(mention_idx_mask.sum())
-                # reranker.tokenizer.decode(context_input[0].tolist())
-                # either (bs, num_TOTAL_mentions (unmasked), embed_size) OR (bs, num_gold_mentions, embed_size)
-                text_encs = reranker.model.module.classification_heads['get_context_embeds'](embedding_context, batch[-2])
+                text_encs = embedding_context
             else:
                 if mention_idxs is None:
                     mention_idx_mask = None
@@ -153,14 +151,17 @@ def evaluate(
                 tmp_num_r = 0.0
                 text_encs = None
 
-            loss, _ = reranker(
-                context_input, candidate_input,
-                text_encs=text_encs,
-                gold_mention_idxs=batch[-2],
-                gold_mention_idx_mask=batch[-1],
-                return_loss=True,
-                # all_inputs_mask=batch[-1],
-            )
+            if not joint_mention_detection:
+                loss, _ = reranker(
+                    context_input, candidate_input,
+                    text_encs=text_encs,
+                    gold_mention_idxs=batch[-2],
+                    gold_mention_idx_mask=batch[-1],
+                    return_loss=True,
+                    # all_inputs_mask=batch[-1],
+                )
+            else:
+                loss = 0.0
 
             overall_loss += loss
 

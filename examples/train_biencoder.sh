@@ -241,9 +241,10 @@ then
   fi
   
   directory=${data}
+  echo $directory
 
-  model_config=experiments/${directory}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}/training_params.txt
-  save_dir=models/entity_encodings/${directory}_${mention_agg_type}_biencoder_${joint_mention_detection}_${context_length}
+  model_config=experiments/${directory}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}/training_params.txt
+  save_dir=models/entity_encodings/${directory}_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}
   if [ "${data}" = "pretrain" ]
   then
     model_path=experiments/${directory}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}/epoch_${epoch}/pytorch_model.bin  # TODO REVISE THIS LATER
@@ -253,7 +254,7 @@ then
     model_path=models/biencoder_wiki_large.bin
     model_config=models/biencoder_wiki_large.json
   else
-    model_path=experiments/${directory}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}/pytorch_model.bin
+    model_path=experiments/${directory}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}/epoch_${epoch}/pytorch_model.bin
   fi
   mkdir -p save_dir
   chmod 777 save_dir
@@ -271,14 +272,16 @@ then
   fi
 
   echo "Getting ${mention_agg_type}_${data} biencoder candidates on wikipedia entities."
-  python scripts/generate_candidates.py \
+  cmd="python scripts/generate_candidates.py \
       --path_to_model_config ${model_config} \
       --path_to_model ${model_path} \
-      --entity_dict_path "/private/home/belindali/BLINK/models/entity.jsonl" \
-      --encoding_save_file_dir "${save_dir}" \
-      --saved_cand_ids "/private/home/belindali/BLINK/models/entity_token_ids_128.t7" \
+      --entity_dict_path /private/home/belindali/BLINK/models/entity.jsonl \
+      --encoding_save_file_dir ${save_dir} \
+      --saved_cand_ids /private/home/belindali/BLINK/models/entity_token_ids_128.t7 \
       --batch_size 512 \
-      --chunk_start ${chunk_start} --chunk_end ${chunk_end}
+      --chunk_start ${chunk_start} --chunk_end ${chunk_end}"
+  echo $cmd
+  $cmd
   python scripts/merge_candidates.py \
       --path_to_saved_chunks ${save_dir}
 fi

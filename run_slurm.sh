@@ -12,13 +12,14 @@
 #SBATCH --constraint=volta32gb
 
 # bash run_slurm.sh pretrain all_avg true 128 60
-data=$1  # webqsp/zeshel/pretrain/zero_shot (ledell's model)
+data=$1  # webqsp_all_ents/zeshel/pretrain/zero_shot (ledell's model)
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none
 joint_mention_detection=$3  # "true"/false
 context_length=$4  # 16/128
 load_saved_cand_encs=$5  # "true"/false
-model_size=$6
-latest_epoch=$7
+adversarial=$6
+model_size=$7
+latest_epoch=$8
 
 
 for i in {0..11}
@@ -28,6 +29,6 @@ do
     if [ ! -f "models/entity_encodings/${data}_${mention_agg_type}_biencoder_${joint_mention_detection}_${context_length}_${latest_epoch}/${start}_${end}.t7" ]
     then
         echo ${data} ${mention_agg_type} ${start}
-        sbatch examples/train_biencoder.sh ${data} ${mention_agg_type} predict 512 ${joint_mention_detection} ${context_length} ${load_saved_cand_encs} ${model_size} ${start} ${end} ${latest_epoch}
+        sbatch examples/train_biencoder.sh ${data} ${mention_agg_type} predict 512 ${joint_mention_detection} ${context_length} ${load_saved_cand_encs} ${adversarial} ${model_size} qa_linear ${start} ${end} ${latest_epoch}
     fi
 done
