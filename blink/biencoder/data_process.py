@@ -384,18 +384,18 @@ def get_context_representation_multiple_mentions_idxs(
         right_quota = 0  # cut entire list (context_right = [])
     input_ids_window = context_left[-left_quota:] + all_mention_tokens + context_right[:right_quota]
 
-    # sanity check
-    # if len(input_ids) <= max_seq_length - 2:
-    #     assert input_ids == input_ids_window
-    # else:
-    #     assert input_ids != input_ids_window
-    #     cut_from_left = len(context_left) - len(context_left[-left_quota:])
-    #     if cut_from_left > 0:
-    #         # must shift mention_idxs
-    #         for c in range(len(mention_idxs)):
-    #             mention_idxs[c] = [
-    #                 mention_idxs[c][0] - cut_from_left, mention_idxs[c][1] - cut_from_left,
-    #             ]
+    # shift mention_idxs
+    if len(input_ids) <= max_seq_length - 2:
+        assert input_ids == input_ids_window
+    else:
+        assert input_ids != input_ids_window
+        cut_from_left = len(context_left) - len(context_left[-left_quota:])
+        if cut_from_left > 0:
+            # must shift mention_idxs
+            for c in range(len(mention_idxs)):
+                mention_idxs[c] = [
+                    mention_idxs[c][0] - cut_from_left, mention_idxs[c][1] - cut_from_left,
+                ]
 
     input_ids_window = [101] + input_ids_window + [102]
     tokens = tokenizer.convert_ids_to_tokens(input_ids_window)
