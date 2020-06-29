@@ -344,7 +344,8 @@ def get_context_representation_multiple_mentions_idxs(
 ):
     '''
     Returns:
-        mention bounds are [inclusive, exclusive) (make both inclusive later)
+        List of mention bounds that are [inclusive, exclusive) (make both inclusive later)
+        NOTE: 2nd index of mention bound may be outside of max_seq_length-range (must deal with later)
     '''
     mention_idxs = sample["tokenized_mention_idxs"]
     input_ids = sample["tokenized_text_ids"]
@@ -352,7 +353,14 @@ def get_context_representation_multiple_mentions_idxs(
     # fit first mention, then all of the others that can reasonably fit...
     all_mention_spans_range = [mention_idxs[0][0], mention_idxs[-1][1]]
     while all_mention_spans_range[1] - all_mention_spans_range[0] + 2 > max_seq_length:
-        mention_idxs = mention_idxs[:len(mention_idxs) - 1]
+        if len(mention_idxs) == 1:
+            # don't cut further
+            assert mention_idxs[0][1] - mention_idxs[0][0] + 2 > max_seq_length
+            # truncate mention
+            mention_idxs[0][1] = max_seq_length + mention_idxs[0][0] - 2
+        else:
+            # cut last mention
+            mention_idxs = mention_idxs[:len(mention_idxs) - 1]
         all_mention_spans_range = [mention_idxs[0][0], mention_idxs[-1][1]]
     
     context_left = input_ids[:all_mention_spans_range[0]]
@@ -451,20 +459,30 @@ def process_mention_data(
     debug=False,
     logger=None,
     add_mention_bounds=True,  # TODO change
-    candidate_token_ids=None,
-    entity2id=None,
     saved_context_dir=None,
-    do_verify=False,
+    candidate_token_ids=None,
 ):
+    extra_ret_values = {}
     if saved_context_dir is not None and os.path.exists(os.path.join(saved_context_dir, "tensor_tuple.pt")):
         data = torch.load(os.path.join(saved_context_dir, "data.pt"))
         tensor_data_tuple = torch.load(os.path.join(saved_context_dir, "tensor_tuple.pt"))
-        return data, tensor_data_tuple
+        return data, tensor_data_tuple, extra_ret_values
+
+    if candidate_token_ids is None and not debug:
+        candidate_token_ids = torch.load("/private/home/belindali/BLINK/models/entity_token_ids_128.t7") # TODO DONT HARDCODE THESE PATHS
+        # id2line = open("/private/home/belindali/BLINK/models/entity.jsonl").readlines() # TODO DONT HARDCODE THESE PATHS
+        # entity2id = {json.loads(id2line[i])['entity']: i for i in range(len(id2line))}
+        logger.info("Loaded saved entities info")
+        extra_ret_values["candidate_token_ids"] = candidate_token_ids
 
     processed_samples = []
 
     if debug:
         samples = samples[:200]
+    if silent:	
+        iter_ = samples
+    else:	
+        iter_ = tqdm(samples)
 
     use_world = True
 
@@ -506,21 +524,31 @@ def process_mention_data(
             context_tokens["mention_idxs"][i][1] -= 1  # make bounds inclusive
 
         label = sample[label_key]
-        title = sample.get(title_key, None)
+        title = sample.get(title_key)
+        label_ids = sample.get("label_id")
 
         if label is None:
             label = [None]
-            sample["label_id"] = [sample["label_id"]]
+            label_ids = [label_ids]
         # remove those that got pruned off
         if len(label) > len(context_tokens['mention_idxs']):
             # TODO change based on pruned_ents if heuristic changes
             label = label[:len(context_tokens['mention_idxs'])]
-        label_tokens = [get_candidate_representation(
-            l, tokenizer, max_cand_length, title,
-        ) for l in label]
-        label_tokens = {
-            k: [label_tokens[l][k] for l in range(len(label_tokens))]
-        for k in label_tokens[0]}
+            label_ids = sample["label_id"][:len(context_tokens['mention_idxs'])]
+
+        if candidate_token_ids is not None:
+            token_ids = [[candidate_token_ids[label_id].tolist()] for label_id in label_ids]
+            label_tokens = {
+                "tokens": "",
+                "ids": token_ids,
+            }
+        else:
+            label_tokens = [get_candidate_representation(
+                l, tokenizer, max_cand_length, title[i],
+            ) for i, l in enumerate(label)]
+            label_tokens = {
+                k: [label_tokens[l][k] for l in range(len(label_tokens))]
+            for k in label_tokens[0]}
         if isinstance(sample["label_id"], list):
             # multiple candidates
             if len(sample["label_id"]) > len(context_tokens['mention_idxs']):
@@ -531,8 +559,12 @@ def process_mention_data(
             assert isinstance(sample["label_id"], int) or isinstance(sample["label_id"], str)
             label_idx = int(sample["label_id"])
 
-        assert len(context_tokens['mention_idxs']) == len(label_tokens['ids'])
-        assert len(label_tokens['ids']) == len(label_idx)
+        try:
+            assert len(context_tokens['mention_idxs']) == len(label_tokens['ids'])
+            assert len(label_tokens['ids']) == len(label_idx)
+        except:
+            import pdb
+            pdb.set_trace()
         record = {
             "context": context_tokens,
             "label": label_tokens,
@@ -619,6 +651,8 @@ def process_mention_data(
             logger.info("Created label IDXs vector")
     # mention_idx_vecs: (bs, max_num_spans, 2), mention_idx_mask: (bs, max_num_spans)
     assert len(mention_idx_vecs.size()) == 3
+    # prune mention_idx_vecs to max_context_length
+    mention_idx_vecs[mention_idx_vecs >= max_context_length] = (max_context_length - 1)
 
     if use_world:
         src_vecs = torch.tensor(
@@ -648,4 +682,4 @@ def process_mention_data(
         torch.save(tensor_data_tuple, os.path.join(saved_context_dir, "tensor_tuple.pt"))
     if logger:
         logger.info("Created tensor dataset")
-    return data, tensor_data_tuple
+    return data, tensor_data_tuple, extra_ret_values

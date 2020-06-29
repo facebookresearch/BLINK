@@ -83,6 +83,12 @@ then
 elif [ "${data}" = "graphqs_all_ents" ]
 then
   data_path="/private/home/belindali/starsem2018-entity-linking/data/graphquestions_all_ents"
+elif [ "${data}" = "wiki_all_ents" ]
+then
+  data_path="/checkpoint/belindali/entity_link/data/tokenized"
+elif [ "${data}" = "wiki_all_ents_sample" ]
+then
+  data_path="/checkpoint/belindali/entity_link/data/tokenized/sample"
 elif [ "${data}" = "zeshel" ]
 then
   data_path="/private/home/ledell/zeshel/data/biencoder/"
@@ -161,6 +167,7 @@ then
     cmd="python blink/biencoder/train_biencoder.py \
       --output_path ${output_path} \
       --data_path /private/home/ledell/data/wiki_ent2 \
+      --title_key entity \
       --num_train_epochs 100 \
       --learning_rate 0.00001 \
       --train_batch_size ${batch_size} \
@@ -199,10 +206,11 @@ then
       fi
     fi
     #  --freeze_cand_enc 
+      # --dont_distribute_train_samples \
     cmd="python blink/biencoder/train_biencoder.py \
       --output_path $output_path \
       ${model_path_arg} ${cand_enc_args} \
-      --no_cached_representation --dont_distribute_train_samples \
+      --title_key entity \
       --data_path ${data_path} \
       --num_train_epochs 100 \
       --learning_rate 0.00001 \

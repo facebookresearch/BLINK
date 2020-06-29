@@ -14,6 +14,7 @@ import sys
 import io
 import random
 import time
+import traceback
 import numpy as np
 
 import torch.nn.functional as F
@@ -33,7 +34,7 @@ from blink.biencoder.biencoder import BiEncoderRanker
 import logging
 
 import blink.candidate_ranking.utils as utils
-import blink.biencoder.data_process as data
+from blink.biencoder.data_process import process_mention_data
 from blink.biencoder.zeshel_utils import DOC_PATH, WORLDS, world_to_id
 from blink.common.optimizer import get_bert_optimizer
 from blink.common.params import BlinkParser
@@ -267,16 +268,62 @@ def main(params):
     # Load train data
     train_samples = utils.read_dataset("train", params["data_path"])
     logger.info("Read %d train samples." % len(train_samples))
+    # samples_per_split = 500000  # TODO don't hardcode
+    # num_splits = len(train_samples) // samples_per_split
+    # tokenized_contexts_dir = os.path.join(params["data_path"], "cache")
+    # if params['end_idx'] == -1: params['end_idx'] = num_splits
+    # train_tensor_data_tuple = []
+    # for train_split in tqdm(range(params['start_idx'], params['end_idx'])):
+    #     if train_split == (num_splits - 1):
+    #         train_subsamples = train_samples[train_split * samples_per_split:]
+    #     train_subsamples = train_samples[(train_split * samples_per_split):((train_split + 1) * samples_per_split)]
+    #     candidate_token_ids = extra_ret_values.get("candidate_token_ids")
+    #     entity2id = extra_ret_values.get("entity2id")
+    #     try:
+    #         if len(train_tensor_data_tuple) == 0:
+    #             for f in range(len(sub_train_tensor_data_tuple)):
+    #                 train_tensor_data_tuple.append([sub_train_tensor_data_tuple[f]])
+    #         else:
+    #             assert len(train_tensor_data_tuple) == len(sub_train_tensor_data_tuple)
+    #             for f in range(len(train_tensor_data_tuple)):
+    #                 train_tensor_data_tuple[f].append(sub_train_tensor_data_tuple[f])
+    #     except:
+    #         import pdb
+    #         pdb.set_trace()
+    logger.info("Finished reading all train samples")
+    # for f in range(len(train_tensor_data_tuple)):
+    #     train_tensor_data_tuple[f] = torch.cat(train_tensor_data_tuple[f])
+    # logger.info("Finished concatenating samples")
 
-    candidate_token_ids = None
-    entity2id = None
-    tokenized_contexts_dir = ""
-    if not params["debug"]:
-        candidate_token_ids = torch.load("/private/home/belindali/BLINK/models/entity_token_ids_128.t7") # TODO DONT HARDCODE THESE PATHS
-        id2line = open("/private/home/belindali/BLINK/models/entity.jsonl").readlines() # TODO DONT HARDCODE THESE PATHS
-        entity2id = {json.loads(id2line[i])['entity']: i for i in range(len(id2line))}
-        tokenized_contexts_dir = os.path.join("/private/home/belindali/BLINK/models/tokenized_contexts/", params["data_path"].split('/')[-1]) # TODO DONT HARDCODE THESE PATHS
+    # Load eval data
+    # TODO: reduce duplicated code here
+    valid_samples = utils.read_dataset("valid", params["data_path"])
+    valid_subset = 1024
+    logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
 
+    # save memory
+    valid_data, valid_tensor_data, extra_ret_values = process_mention_data(
+        samples=valid_samples[:valid_subset],  # use subset of valid data TODO Make subset random????
+        tokenizer=tokenizer,
+        max_context_length=params["max_context_length"],
+        max_cand_length=params["max_cand_length"],
+        context_key=params["context_key"],
+        title_key=params["title_key"],
+        silent=params["silent"],
+        logger=logger,
+        debug=params["debug"],
+        add_mention_bounds=(not args.no_mention_bounds),
+        candidate_token_ids=None,
+        # saved_context_dir=os.path.join(tokenized_contexts_dir, "valid"),
+    )
+    candidate_token_ids = extra_ret_values["candidate_token_ids"]
+    valid_tensor_data = TensorDataset(*valid_tensor_data)
+    valid_sampler = SequentialSampler(valid_tensor_data)
+    valid_dataloader = DataLoader(
+        valid_tensor_data, sampler=valid_sampler, batch_size=eval_batch_size
+    )
+
+    # load candidate encodings
     cand_encs = None
     cand_encs_flat_index = None
     if params["freeze_cand_enc"]:
@@ -304,53 +351,6 @@ def main(params):
         cand_encs_index.nprobe = 20
         logger.info("Built and trained FAISS index on entity encodings")
         num_neighbors = 10
-
-    train_data, train_tensor_data_tuple = data.process_mention_data(
-        samples=train_samples,
-        tokenizer=tokenizer,
-        max_context_length=params["max_context_length"],
-        max_cand_length=params["max_cand_length"],
-        context_key=params["context_key"],
-        silent=params["silent"],
-        logger=logger,
-        debug=params["debug"],
-        add_mention_bounds=(not args.no_mention_bounds),
-        candidate_token_ids=candidate_token_ids,
-        entity2id=entity2id,
-        saved_context_file=os.path.join(tokenized_contexts_dir, "train.json"),
-        get_cached_representation=(not params["debug"] and not params["no_cached_representation"]),
-    )
-    logger.info("Finished reading train samples")
-
-    # Load eval data
-    # TODO: reduce duplicated code here
-    valid_samples = utils.read_dataset("valid", params["data_path"])
-    valid_subset = 1024
-    logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
-
-    valid_data, valid_tensor_data = data.process_mention_data(
-        samples=valid_samples[:valid_subset],  # use subset of valid data TODO Make subset random????
-        tokenizer=tokenizer,
-        max_context_length=params["max_context_length"],
-        max_cand_length=params["max_cand_length"],
-        context_key=params["context_key"],
-        silent=params["silent"],
-        logger=logger,
-        debug=params["debug"],
-        add_mention_bounds=(not args.no_mention_bounds),
-        candidate_token_ids=candidate_token_ids,
-        entity2id=entity2id,
-        saved_context_file=os.path.join(tokenized_contexts_dir, "valid.json"),
-        get_cached_representation=(not params["debug"] and not params["no_cached_representation"]),
-    )
-    valid_tensor_data = TensorDataset(*valid_tensor_data)
-    valid_sampler = SequentialSampler(valid_tensor_data)
-    valid_dataloader = DataLoader(
-        valid_tensor_data, sampler=valid_sampler, batch_size=eval_batch_size
-    )
-    # save memory
-    candidate_token_ids = None
-    entity2id = None
 
     # evaluate before training
     results = evaluate(
@@ -383,15 +383,33 @@ def main(params):
     num_train_epochs = params["num_train_epochs"]
     if params["dont_distribute_train_samples"]:
         num_samples_per_batch = len(train_samples)
+
+        train_data, train_tensor_data_tuple, extra_ret_values = process_mention_data(
+            samples=train_samples,
+            tokenizer=tokenizer,
+            max_context_length=params["max_context_length"],
+            max_cand_length=params["max_cand_length"],
+            context_key=params["context_key"],
+            title_key=params["title_key"],
+            silent=params["silent"],
+            logger=logger,
+            debug=params["debug"],
+            add_mention_bounds=(not args.no_mention_bounds),
+            # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
+            candidate_token_ids=candidate_token_ids,
+        )
+        logger.info("Finished preparing training data")
     else:
         num_samples_per_batch = len(train_samples) // num_train_epochs
 
 
     trainer_path = params.get("path_to_trainer_state", None)
     optimizer = get_optimizer(model, params)
-    scheduler = get_scheduler(params, optimizer, min(
-        len(train_tensor_data_tuple[0]), num_samples_per_batch,
-    ), logger)
+    scheduler = get_scheduler(
+        params, optimizer, num_samples_per_batch,
+        # min(len(train_tensor_data_tuple[0]), num_samples_per_batch), 
+        logger
+    )
     if trainer_path is not None:
         training_state = torch.load(trainer_path)
         optimizer.load_state_dict(training_state["optimizer"])
@@ -414,6 +432,21 @@ def main(params):
             start_idx = epoch_idx * num_samples_per_batch
             end_idx = (epoch_idx + 1) * num_samples_per_batch
 
+            train_data, train_tensor_data_tuple, extra_ret_values = process_mention_data(
+                samples=train_samples[start_idx:end_idx],
+                tokenizer=tokenizer,
+                max_context_length=params["max_context_length"],
+                max_cand_length=params["max_cand_length"],
+                context_key=params["context_key"],
+                title_key=params["title_key"],
+                silent=params["silent"],
+                logger=logger,
+                debug=params["debug"],
+                add_mention_bounds=(not args.no_mention_bounds),
+                # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
+                candidate_token_ids=candidate_token_ids,
+            )
+            logger.info("Finished preparing training data for epoch {}".format(epoch_idx))
         batch_train_tensor_data = TensorDataset(
             *[element[start_idx:end_idx] for element in train_tensor_data_tuple]
         )
@@ -525,6 +558,8 @@ def main(params):
                 ]).to(device)
                 all_inputs_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
             
+            # import pdb
+            # pdb.set_trace()
             loss, _ = reranker(
                 context_input, candidate_input,
                 cand_encs=cand_encs_input, text_encs=mention_reps_input,

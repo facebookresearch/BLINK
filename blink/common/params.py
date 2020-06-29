@@ -142,6 +142,7 @@ class BlinkParser(argparse.ArgumentParser):
             help="Whether to lower case the input text. True for uncased models, False for cased models.",
         )
         parser.add_argument("--context_key", default="context", type=str)
+        parser.add_argument("--title_key", default="entity", type=str)
         parser.add_argument(
             "--out_dim", type=int, default=1, help="Output dimention of bi-encoders.",
         )
@@ -296,12 +297,6 @@ class BlinkParser(argparse.ArgumentParser):
             default=False,
             action="store_true",
             help="Don't distribute all training samples across the epochs (go through all samples every epoch)",
-        )
-        parser.add_argument(
-            "--no_cached_representation",
-            default=False,
-            action="store_true",
-            help="Don't load cached representation",
         )
         parser.add_argument(
             "--freeze_cand_enc",
