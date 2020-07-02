@@ -272,9 +272,12 @@ class BiEncoderModule(torch.nn.Module):
         super(BiEncoderModule, self).__init__()
         # TODO CANDIDATE ENCODER IS BERT_LARGE
         ctxt_bert = BertModel.from_pretrained(params["bert_model"], output_hidden_states=True)
+        if params["load_cand_enc_only"]:
+            bert_model = "bert-large-uncased"
+        else:
+            bert_model = params['bert_model']
         cand_bert = BertModel.from_pretrained(
-            #params['bert_model'],
-            "bert-large-uncased",  # TODO DON"T HARDCODE!!!!
+            bert_model,
             output_hidden_states=True,
         )
         self.context_encoder = BertEncoder(

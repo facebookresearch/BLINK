@@ -91,6 +91,7 @@ def evaluate(
                 mention_idxs = batch[-2]
             mention_idx_mask = batch[-1].clone()
 
+            # MEMORY WASTING EVALUATION :/
             if params["freeze_cand_enc"]:
                 # get mention encoding
                 embedding_context, mention_logits, mention_bounds = reranker.encode_context(
@@ -151,6 +152,7 @@ def evaluate(
                 tmp_num_p = 0.0
                 tmp_num_r = 0.0
                 text_encs = None
+            # '''
 
             if not joint_mention_detection:
                 loss, _ = reranker(
@@ -177,8 +179,11 @@ def evaluate(
         cand_encs = cand_encs.to("cpu")
         torch.cuda.empty_cache()
 
-    normalized_eval_accuracy = eval_accuracy / nb_eval_examples
-    normalized_overall_loss = overall_loss / nb_eval_steps
+    normalized_eval_accuracy = 0
+    if nb_eval_examples > 0:
+        normalized_eval_accuracy = eval_accuracy / nb_eval_examples
+    if nb_eval_steps > 0:
+        normalized_overall_loss = overall_loss / nb_eval_steps
     if eval_num_p > 0:
         normalized_eval_p = eval_accuracy / eval_num_p
     else:
@@ -353,12 +358,12 @@ def main(params):
         num_neighbors = 10
 
     # evaluate before training
-    results = evaluate(
-        reranker, valid_dataloader, params,
-        cand_encs=cand_encs, device=device,
-        logger=logger, faiss_index=cand_encs_flat_index,
-        joint_mention_detection=True,
-    )
+    # results = evaluate(
+    #     reranker, valid_dataloader, params,
+    #     cand_encs=cand_encs, device=device,
+    #     logger=logger, faiss_index=cand_encs_flat_index,
+    #     joint_mention_detection=True,
+    # )
     logger.info("Non-end2end")
     results = evaluate(
         reranker, valid_dataloader, params,
@@ -446,9 +451,10 @@ def main(params):
                 # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
                 candidate_token_ids=candidate_token_ids,
             )
-            logger.info("Finished preparing training data for epoch {}".format(epoch_idx))
+            logger.info("Finished preparing training data for epoch {}: {} samples".format(epoch_idx, len(train_tensor_data_tuple[0])))
         batch_train_tensor_data = TensorDataset(
-            *[element[start_idx:end_idx] for element in train_tensor_data_tuple]
+            *list(train_tensor_data_tuple)
+            # *[element[start_idx:end_idx] for element in train_tensor_data_tuple]
         )
         if params["shuffle"]:
             train_sampler = RandomSampler(batch_train_tensor_data)
@@ -557,9 +563,7 @@ def main(params):
                     pos_cand_encs_input, neg_cand_encs_input,
                 ]).to(device)
                 all_inputs_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
-            
-            # import pdb
-            # pdb.set_trace()
+
             loss, _ = reranker(
                 context_input, candidate_input,
                 cand_encs=cand_encs_input, text_encs=mention_reps_input,
@@ -621,6 +625,7 @@ def main(params):
                     reranker, valid_dataloader, params,
                     cand_encs=cand_encs, device=device,
                     logger=logger, faiss_index=cand_encs_flat_index,
+                    joint_mention_detection=False,
                     get_losses=params["get_losses"],
                 )
                 model.train()
@@ -644,13 +649,13 @@ def main(params):
         }, os.path.join(epoch_output_folder_path, "training_state.th"))
 
         output_eval_file = os.path.join(epoch_output_folder_path, "eval_results.txt")
-        logger.info("Valid data evaluation")
-        results = evaluate(
-            reranker, valid_dataloader, params,
-            cand_encs=cand_encs, device=device,
-            logger=logger, faiss_index=cand_encs_flat_index,
-            get_losses=params["get_losses"],
-        )
+        # logger.info("Valid data evaluation")
+        # results = evaluate(
+        #     reranker, valid_dataloader, params,
+        #     cand_encs=cand_encs, device=device,
+        #     logger=logger, faiss_index=cand_encs_flat_index,
+        #     get_losses=params["get_losses"],
+        # )
         logger.info("Valid data evaluation -- non-end2end")
         results = evaluate(
             reranker, valid_dataloader, params,
@@ -664,6 +669,7 @@ def main(params):
             reranker, train_dataloader, params,
             cand_encs=cand_encs, device=device,
             logger=logger, faiss_index=cand_encs_flat_index,
+            joint_mention_detection=False,
             get_losses=params["get_losses"],
         )
 
@@ -690,7 +696,7 @@ def main(params):
 
     if params["evaluate"]:
         params["path_to_model"] = model_output_path
-        evaluate(params, cand_encs=cand_encs, logger=logger, faiss_index=cand_encs_flat_index)
+        evaluate(params, cand_encs=cand_encs, logger=logger, faiss_index=cand_encs_flat_index, joint_mention_detection=False)
 
 
 if __name__ == "__main__":

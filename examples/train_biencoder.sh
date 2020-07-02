@@ -64,6 +64,7 @@ mention_scoring_method=${10}  # qa_linear/qa_mlp
 chunk_start=${11}
 chunk_end=${12}
 epoch=${13}
+eval_batch_size=${14}
 
 
 echo $3
@@ -189,6 +190,10 @@ then
     then
       batch_size="32"
     fi
+    if [ "${eval_batch_size}" = "" ]
+    then
+      eval_batch_size="32"
+    fi
     #--load_cand_enc_only \
     model_path_arg=""
     output_path="experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
@@ -217,7 +222,7 @@ then
       --max_context_length ${context_length} \
       --max_cand_length 128 \
       --train_batch_size ${batch_size} \
-      --eval_batch_size 64 \
+      --eval_batch_size ${eval_batch_size} \
       --bert_model ${model_ckpt} \
       --mention_scoring_method ${mention_scoring_method} \
       --eval_interval 500 \
