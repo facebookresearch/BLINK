@@ -44,8 +44,8 @@ chmod +x download_models.sh
 
 We additionally provide a [FAISS](https://github.com/facebookresearch/faiss) indexer in BLINK, which enables efficient exact/approximate retrieval for biencoder model.
 
-- [flat index](s3://dl.fbaipublicfiles.com/BLINK/faiss_flat_index.pkl)
-- [hnsw (approximate search) index](s3://dl.fbaipublicfiles.com/BLINK/faiss_hnsw_index.pkl)
+- [flat index](http://dl.fbaipublicfiles.com/BLINK//faiss_flat_index.pkl)
+- [hnsw (approximate search) index](http://dl.fbaipublicfiles.com/BLINK/faiss_hnsw_index.pkl)
 
 
 To build and save FAISS (exact search) index yourself, run
