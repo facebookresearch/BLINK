@@ -42,17 +42,39 @@ chmod +x download_models.sh
 ./download_models.sh
 ```
 
+We additionally provide a [FAISS](https://github.com/facebookresearch/faiss) indexer in BLINK, which enables efficient exact/approximate retrieval for biencoder model.
+
+- [flat index](s3://dl.fbaipublicfiles.com/BLINK/faiss_flat_index.pkl)
+- [hnsw (approximate search) index](s3://dl.fbaipublicfiles.com/BLINK/faiss_hnsw_index.pkl)
+
+
+To build and save FAISS (exact search) index yourself, run
+`python blink/build_faiss_index.py --output_path models/faiss_flat_index.pkl`
+
+
 ### 3. Use BLINK interactively
 A quick way to explore the BLINK linking capabilities is through the `main_dense` interactive script. BLINK uses [Flair](https://github.com/flairNLP/flair) for Named Entity Recognition (NER) to obtain entity mentions from input text, then run entity linking. 
 
 ```console
 python blink/main_dense.py -i
 ```
+
 Fast mode: in the fast mode the model only uses the bi-encoder, which is much faster (accuracy drops slightly, see details in "Benchmarking BLINK" section). 
 
 ```console
 python blink/main_dense.py -i --fast
 ```
+
+To run BLINK with saved FAISS index, run:
+```console
+python blink/main_dense.py --faiss_index flat --index_path models/faiss_flat_index.pkl
+```
+or 
+```console
+python blink/main_dense.py --faiss_index hnsw --index_path models/faiss_hnsw_index.pkl
+```
+
+
 Example: 
 ```console
 Bert and Ernie are two Muppets who appear together in numerous skits on the popular children's television show of the United States, Sesame Street.

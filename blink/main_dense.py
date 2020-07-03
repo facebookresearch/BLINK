@@ -26,6 +26,7 @@ from blink.biencoder.data_process import (
 import blink.candidate_ranking.utils as utils
 from blink.crossencoder.train_cross import modify, evaluate
 from blink.crossencoder.data_process import prepare_crossencoder_data
+from blink.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer
 
 
 HIGHLIGHTS = [
@@ -54,13 +55,15 @@ def _print_colorful_text(input_sentence, samples):
                     int(sample["end_pos"]) : int(samples[idx + 1]["start_pos"])
                 ]
             else:
-                msg += input_sentence[int(sample["end_pos"]) : ]
+                msg += input_sentence[int(sample["end_pos"]) :]
     else:
         msg = input_sentence
     print("\n" + str(msg) + "\n")
 
 
-def _print_colorful_prediction(idx, sample, e_id, e_title, e_text, e_url, show_url=False):
+def _print_colorful_prediction(
+    idx, sample, e_id, e_title, e_text, e_url, show_url=False
+):
     print(colored(sample["mention"], "grey", HIGHLIGHTS[idx % len(HIGHLIGHTS)]))
     to_print = "id:{}\ntitle:{}\ntext:{}\n".format(e_id, e_title, e_text[:256])
     if show_url:
@@ -92,8 +95,25 @@ def _annotate(ner_model, input_sentences):
     return samples
 
 
-def _load_candidates(entity_catalogue, entity_encoding):
-    candidate_encoding = torch.load(entity_encoding)
+def _load_candidates(
+    entity_catalogue, entity_encoding, faiss_index=None, index_path=None,
+):
+    # only load candidate encoding if not using faiss index
+    if faiss_index is None:
+        candidate_encoding = torch.load(entity_encoding)
+        indexer = None
+    else:
+        logger.info("Using faiss index to retrieve entities.")
+        candidate_encoding = None
+        assert index_path is not None, "Error! Empty indexer path."
+        if faiss_index == "flat":
+            indexer = DenseFlatIndexer(1)
+        elif faiss_index == "hnsw":
+            indexer = DenseHNSWFlatIndexer(1)
+        else:
+            raise ValueError("Error! Unsupported indexer type! Choose from flat,hnsw.")
+        indexer.deserialize_from(index_path)
+
     # load all the 5903527 entities
     title2id = {}
     id2title = {}
@@ -101,7 +121,8 @@ def _load_candidates(entity_catalogue, entity_encoding):
     wikipedia_id2local_id = {}
     local_idx = 0
     with open(entity_catalogue, "r") as fin:
-        for line in fin:
+        lines = fin.readlines()
+        for line in lines:
             entity = json.loads(line)
 
             if "idx" in entity:
@@ -118,7 +139,14 @@ def _load_candidates(entity_catalogue, entity_encoding):
             id2title[local_idx] = entity["title"]
             id2text[local_idx] = entity["text"]
             local_idx += 1
-    return candidate_encoding, title2id, id2title, id2text, wikipedia_id2local_id
+    return (
+        candidate_encoding,
+        title2id,
+        id2title,
+        id2text,
+        wikipedia_id2local_id,
+        indexer,
+    )
 
 
 def __map_test_entities(test_entities_path, title2id, logger):
@@ -204,7 +232,7 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
     return dataloader
 
 
-def _run_biencoder(biencoder, dataloader, candidate_encoding, top_k=100):
+def _run_biencoder(biencoder, dataloader, candidate_encoding, top_k=100, indexer=None):
     biencoder.model.eval()
     labels = []
     nns = []
@@ -212,14 +240,21 @@ def _run_biencoder(biencoder, dataloader, candidate_encoding, top_k=100):
     for batch in tqdm(dataloader):
         context_input, _, label_ids = batch
         with torch.no_grad():
-            scores = biencoder.score_candidate(
-                context_input, None, cand_encs=candidate_encoding  # .to(device)
-            )
-        scores, indicies = scores.topk(top_k)
+            if indexer is not None:
+                context_encoding = biencoder.encode_context(context_input).numpy()
+                context_encoding = np.ascontiguousarray(context_encoding)
+                scores, indicies = indexer.search_knn(context_encoding, top_k)
+            else:
+                scores = biencoder.score_candidate(
+                    context_input, None, cand_encs=candidate_encoding  # .to(device)
+                )
+                scores, indicies = scores.topk(top_k)
+                scores = scores.data.numpy()
+                indicies = indicies.data.numpy()
 
         labels.extend(label_ids.data.numpy())
-        nns.extend(indicies.data.numpy())
-        all_scores.extend(scores.data.numpy())
+        nns.extend(indicies)
+        all_scores.extend(scores)
     return labels, nns, all_scores
 
 
@@ -275,7 +310,10 @@ def load_models(args, logger=None):
         id2title,
         id2text,
         wikipedia_id2local_id,
-    ) = _load_candidates(args.entity_catalogue, args.entity_encoding)
+        faiss_indexer,
+    ) = _load_candidates(
+        args.entity_catalogue, args.entity_encoding, args.faiss_index, args.index_path,
+    )
 
     return (
         biencoder,
@@ -287,6 +325,7 @@ def load_models(args, logger=None):
         id2title,
         id2text,
         wikipedia_id2local_id,
+        faiss_indexer,
     )
 
 
@@ -302,6 +341,7 @@ def run(
     id2title,
     id2text,
     wikipedia_id2local_id,
+    faiss_indexer=None,
     test_data=None,
 ):
 
@@ -314,7 +354,7 @@ def run(
         raise ValueError(msg)
 
     id2url = {
-        v : 'https://en.wikipedia.org/wiki?curid=%s' % k 
+        v: "https://en.wikipedia.org/wiki?curid=%s" % k
         for k, v in wikipedia_id2local_id.items()
     }
 
@@ -373,7 +413,7 @@ def run(
         logger.info("run biencoder")
         top_k = args.top_k
         labels, nns, scores = _run_biencoder(
-            biencoder, dataloader, candidate_encoding, top_k
+            biencoder, dataloader, candidate_encoding, top_k, faiss_indexer
         )
 
         if args.interactive:
@@ -389,7 +429,9 @@ def run(
                 e_title = id2title[e_id]
                 e_text = id2text[e_id]
                 e_url = id2url[e_id]
-                _print_colorful_prediction(idx, sample, e_id, e_title, e_text, e_url, args.show_url)
+                _print_colorful_prediction(
+                    idx, sample, e_id, e_title, e_text, e_url, args.show_url
+                )
                 idx += 1
             print()
 
@@ -476,7 +518,9 @@ def run(
                 e_title = id2title[e_id]
                 e_text = id2text[e_id]
                 e_url = id2url[e_id]
-                _print_colorful_prediction(idx, sample, e_id, e_title, e_text, e_url, args.show_url)
+                _print_colorful_prediction(
+                    idx, sample, e_id, e_title, e_text, e_url, args.show_url
+                )
                 idx += 1
             print()
         else:
@@ -590,7 +634,7 @@ if __name__ == "__main__":
         default="models/crossencoder_wiki_large.json",
         help="Path to the crossencoder configuration.",
     )
-    
+
     parser.add_argument(
         "--top_k",
         dest="top_k",
@@ -611,12 +655,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fast", dest="fast", action="store_true", help="only biencoder mode"
     )
-    
+
     parser.add_argument(
-        "--show_url", dest="show_url", action="store_true", 
-        help="whether to show entity url in interactive mode"
+        "--show_url",
+        dest="show_url",
+        action="store_true",
+        help="whether to show entity url in interactive mode",
     )
 
+    parser.add_argument(
+        "--faiss_index", type=str, default=None, help="whether to use faiss index",
+    )
+
+    parser.add_argument(
+        "--index_path", type=str, default=None, help="path to load indexer",
+    )
 
     args = parser.parse_args()
 
