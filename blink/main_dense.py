@@ -26,7 +26,7 @@ from blink.biencoder.data_process import (
 import blink.candidate_ranking.utils as utils
 from blink.crossencoder.train_cross import modify, evaluate
 from blink.crossencoder.data_process import prepare_crossencoder_data
-from blink.indexer.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer
+from blink.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer
 
 
 HIGHLIGHTS = [
@@ -55,13 +55,15 @@ def _print_colorful_text(input_sentence, samples):
                     int(sample["end_pos"]) : int(samples[idx + 1]["start_pos"])
                 ]
             else:
-                msg += input_sentence[int(sample["end_pos"]) : ]
+                msg += input_sentence[int(sample["end_pos"]) :]
     else:
         msg = input_sentence
     print("\n" + str(msg) + "\n")
 
 
-def _print_colorful_prediction(idx, sample, e_id, e_title, e_text, e_url, show_url=False):
+def _print_colorful_prediction(
+    idx, sample, e_id, e_title, e_text, e_url, show_url=False
+):
     print(colored(sample["mention"], "grey", HIGHLIGHTS[idx % len(HIGHLIGHTS)]))
     to_print = "id:{}\ntitle:{}\ntext:{}\n".format(e_id, e_title, e_text[:256])
     if show_url:
@@ -94,10 +96,7 @@ def _annotate(ner_model, input_sentences):
 
 
 def _load_candidates(
-    entity_catalogue,
-    entity_encoding,
-    faiss_index=None,
-    indexer_path=None,
+    entity_catalogue, entity_encoding, faiss_index=None, index_path=None,
 ):
     # only load candidate encoding if not using faiss index
     if faiss_index is None:
@@ -106,15 +105,14 @@ def _load_candidates(
     else:
         logger.info("Using faiss index to retrieve entities.")
         candidate_encoding = None
-        assert indexer_path is not None, "Error! Empty indexer path."
+        assert index_path is not None, "Error! Empty indexer path."
         if faiss_index == "flat":
             indexer = DenseFlatIndexer(1)
         elif faiss_index == "hnsw":
             indexer = DenseHNSWFlatIndexer(1)
         else:
-            print("Error! Unsupported indexer type! Choose from flat,hnsw.")
-            raise
-        indexer.deserialize_from(indexer_path)
+            raise ValueError("Error! Unsupported indexer type! Choose from flat,hnsw.")
+        indexer.deserialize_from(index_path)
 
     # load all the 5903527 entities
     title2id = {}
@@ -141,7 +139,14 @@ def _load_candidates(
             id2title[local_idx] = entity["title"]
             id2text[local_idx] = entity["text"]
             local_idx += 1
-    return candidate_encoding, title2id, id2title, id2text, wikipedia_id2local_id, indexer
+    return (
+        candidate_encoding,
+        title2id,
+        id2title,
+        id2text,
+        wikipedia_id2local_id,
+        indexer,
+    )
 
 
 def __map_test_entities(test_entities_path, title2id, logger):
@@ -307,10 +312,7 @@ def load_models(args, logger=None):
         wikipedia_id2local_id,
         faiss_indexer,
     ) = _load_candidates(
-        args.entity_catalogue, 
-        args.entity_encoding, 
-        args.faiss_index, 
-        args.indexer_path,
+        args.entity_catalogue, args.entity_encoding, args.faiss_index, args.index_path,
     )
 
     return (
@@ -352,7 +354,7 @@ def run(
         raise ValueError(msg)
 
     id2url = {
-        v : 'https://en.wikipedia.org/wiki?curid=%s' % k 
+        v: "https://en.wikipedia.org/wiki?curid=%s" % k
         for k, v in wikipedia_id2local_id.items()
     }
 
@@ -427,7 +429,9 @@ def run(
                 e_title = id2title[e_id]
                 e_text = id2text[e_id]
                 e_url = id2url[e_id]
-                _print_colorful_prediction(idx, sample, e_id, e_title, e_text, e_url, args.show_url)
+                _print_colorful_prediction(
+                    idx, sample, e_id, e_title, e_text, e_url, args.show_url
+                )
                 idx += 1
             print()
 
@@ -514,7 +518,9 @@ def run(
                 e_title = id2title[e_id]
                 e_text = id2text[e_id]
                 e_url = id2url[e_id]
-                _print_colorful_prediction(idx, sample, e_id, e_title, e_text, e_url, args.show_url)
+                _print_colorful_prediction(
+                    idx, sample, e_id, e_title, e_text, e_url, args.show_url
+                )
                 idx += 1
             print()
         else:
@@ -628,7 +634,7 @@ if __name__ == "__main__":
         default="models/crossencoder_wiki_large.json",
         help="Path to the crossencoder configuration.",
     )
-    
+
     parser.add_argument(
         "--top_k",
         dest="top_k",
@@ -649,24 +655,20 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fast", dest="fast", action="store_true", help="only biencoder mode"
     )
-    
+
     parser.add_argument(
-        "--show_url", dest="show_url", action="store_true", 
-        help="whether to show entity url in interactive mode"
+        "--show_url",
+        dest="show_url",
+        action="store_true",
+        help="whether to show entity url in interactive mode",
     )
 
     parser.add_argument(
-        "--faiss_index",
-        type=str,
-        default=None,
-        help="whether to use faiss index",
+        "--faiss_index", type=str, default=None, help="whether to use faiss index",
     )
 
     parser.add_argument(
-        "--indexer_path",
-        type=str,
-        default=None,
-        help="path to load indexer",
+        "--index_path", type=str, default=None, help="path to load indexer",
     )
 
     args = parser.parse_args()
