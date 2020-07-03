@@ -6,6 +6,10 @@ BLINK is an Entity Linking python library that uses Wikipedia as the target know
 The process of linking entities to Wikipedia is also known as [Wikification](https://en.wikipedia.org/wiki/Wikification).
 
 
+### news
+- (3 July 2020) addedd [FAISS](https://github.com/facebookresearch/faiss) support in BLINK - efficient exact/approximate retrieval
+
+
 ## BLINK architecture:
 
 The BLINK architecture is described in the following paper:
