@@ -312,7 +312,7 @@ def load_models(args, logger=None):
         wikipedia_id2local_id,
         faiss_indexer,
     ) = _load_candidates(
-        args.entity_catalogue, args.entity_encoding, args.faiss_index, args.index_path,
+        args.entity_catalogue, args.entity_encoding, faiss_index=args.faiss_index, index_path=args.index_path,
     )
 
     return (

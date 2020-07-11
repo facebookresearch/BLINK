@@ -27,6 +27,8 @@ DATASETS = [
 ]
 
 PARAMETERS = {
+    "faiss_index": None,
+    "index_path": None,
     "test_entities": None,
     "test_mentions": None,
     "interactive": False,
@@ -38,6 +40,7 @@ PARAMETERS = {
     "crossencoder_config": "models/crossencoder_wiki_large.json",
     "output_path": "output",
     "fast": False,
+    "top_k": 100,
 }
 args = argparse.Namespace(**PARAMETERS)
 
