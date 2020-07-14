@@ -334,7 +334,7 @@ for i, split_examples in enumerate(examples_new):
 
 examples_new = examples_new_2
 
-# create chunked data, as well as mappings from each chunk to all of its corresponding mentions
+# chunked data -> mention boundary data for tokenized version
 split_idx = 5
 splits = [0, 1500000, 3000000, 4500000, 6000000, 7500000, 9000001]
 train_examples = train_examples[splits[split_idx]:splits[split_idx+1]]
