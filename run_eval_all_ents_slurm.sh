@@ -26,6 +26,9 @@
 
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_false_bert_large_qa_linear' joint 0.25 100 joint_0
+# bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0
+# srun --gpus-per-node=8 --partition=learnfair --time=60 --cpus-per-task 80 --pty -l \
+# bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;6' joint 0.25 100 joint_0 16
 test_questions=$1  # webqsp_filtered/nq/graphqs_filtered
 subset=$2  # test/dev/train_only
 model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
@@ -35,7 +38,7 @@ top_k=$6  # 100
 final_thresholding=$7  # top_joint_by_mention / top_entity_by_mention / joint_0
 eval_batch_size=$8  # 64
 debug="false"  # "true"/<anything other than "true"> (does debug_cross)
-gpu="false"
+gpu="true"
 
 export PYTHONPATH=.
 
@@ -54,39 +57,10 @@ then
     save_dir_batch="_realtime_test"
 fi
 
-if [ "${test_questions}" = "webqsp_filtered" ]
-then
-    if [ "${subset}" = "test" ]
-    then
-        wc="with_classes."
-    else
-        wc=""
-    fi
-    # mentions_file=/private/home/belindali/starsem2018-entity-linking/data/WebQSP/input/webqsp.${subset}.entities.${wc}filtered_on_all.json
-    mentions_file=/private/home/belindali/starsem2018-entity-linking/data/WebQSP/input/webqsp.${subset}.entities.${wc}all_pos.filtered_on_all.json
-    get_predictions="--get_predictions"
-elif [ "${test_questions}" = "graphqs_filtered" ]
-then
-    # mentions_file=/private/home/belindali/starsem2018-entity-linking/data/graphquestions/input/graph.${subset}.entities.filtered.json
-    mentions_file=/private/home/belindali/starsem2018-entity-linking/data/graphquestions/input/graph.${subset}.entities.all_pos.filtered_on_all.no_partials.json
-    get_predictions="--get_predictions"
-elif [ "${test_questions}" = "nq" ]
-then
-    mentions_file=/checkpoint/belindali/nq_orig/nq_dev.el.json
-    get_predictions="--get_predictions"
-fi
+mentions_file="/checkpoint/belindali/entity_link/data/AIDA-YAGO2/tokenized/${subset}.jsonl"
 
-if [ "${ner}" = "qa_classifier" ]
-then
-    mention_classifier_threshold_args="--mention_classifier_threshold ${mention_classifier_threshold}"
-    echo $mention_classifier_threshold_args
-elif [ "${ner}" = "joint" ]
-then
-    mention_classifier_threshold_args="--mention_classifier_threshold ${mention_classifier_threshold}"
-    echo $mention_classifier_threshold_args
-else
-    mention_classifier_threshold_args=""
-fi
+mention_classifier_threshold_args="--mention_classifier_threshold ${mention_classifier_threshold}"
+echo $mention_classifier_threshold_args
 
 if [ "${gpu}" = "false" ]
 then
@@ -95,9 +69,11 @@ else
     cuda_args="--use_cuda"
 fi
 
-if [ "${model}" = "finetuned_webqsp" ] || [ "${model}" = "pretrain" ] || [ "${model}" = "finetuned_webqsp_all_ents" ]
+if [ "${model}" = "finetuned_webqsp" ] || [ "${model}" = "pretrain" ] || [ "${model}" = "finetuned_webqsp_all_ents" ] || [ "${model}" = "wiki_all_ents" ]
 then
     model_folder=${MODEL_PARSE[1]}  # biencoder_none_false_16_2
+    echo ${model_folder}
+    echo ${MODEL_PARSE[1]}
     epoch=${MODEL_PARSE[2]}  # 9
     if [[ $epoch != "" ]]
     then
@@ -109,19 +85,15 @@ then
     elif [ "${model}" = "finetuned_webqsp_all_ents" ]
     then
         dir="webqsp_all_ents"
+    elif [ "${model}" = "wiki_all_ents" ]
+    then
+        dir="wiki_all_ents"
     else
         dir="pretrain"
     fi
     biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
     biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
     entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
-# elif [ "${model}" = "finetuned_graphqs" ]
-# then
-#     entity_encoding=models/all_entities_large.t7
-#     biencoder_config=models/biencoder_wiki_large.json
-#     biencoder_model=models/biencoder_wiki_large.bin
-#     crossencoder_config=models/crossencoder_wiki_large.json
-#     crossencoder_model=models/crossencoder_wiki_large.bin
 elif [ "${model}" = "zero_shot" ]
 then
     entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
@@ -139,14 +111,7 @@ else
 fi
 echo ${mentions_file}
 
-if [ "${debug}" = "true" ]
-then
-    debug="-dc"
-else
-    debug=""
-fi
-
-command="python blink/main_dense.py -q ${debug} \
+command="python blink/main_dense_all_ents.py -q \
     --test_mentions ${mentions_file} \
     --test_entities models/entity.jsonl \
     --entity_catalogue models/entity.jsonl \
@@ -154,7 +119,7 @@ command="python blink/main_dense.py -q ${debug} \
     --biencoder_model ${biencoder_model} \
     --biencoder_config ${biencoder_config} \
     --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_${ner}${mention_classifier_threshold}_top${top_k}cands_final_${final_thresholding}${save_dir_batch} \
-    -n ${ner} ${mention_classifier_threshold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
+    -n joint_all_ents ${mention_classifier_threshold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
     --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args}"
     # --no_mention_bounds_biencoder --mention_aggregation_type all_avg"
     # --eval_main_entity
