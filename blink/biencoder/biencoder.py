@@ -47,6 +47,7 @@ class MentionScoresHead(nn.Module):
     ):
         super(MentionScoresHead, self).__init__()
         self.scoring_method = scoring_method
+        self.max_mention_length = 10  # restrict max mention length
         if self.scoring_method == "qa_linear":
             # self.attention_scorer = nn.Sequential(
             #     nn.Linear(bert_output_dim, bert_output_dim),
@@ -77,6 +78,9 @@ class MentionScoresHead(nn.Module):
             raise NotImplementedError()
 
     def forward(self, bert_output, mask_ctxt):
+        '''
+        Retuns scores for *inclusive* mention boundaries
+        '''
         # (bs, seqlen, 3)
         logits = self.bound_classifier(bert_output)
         if self.scoring_method[:2] == "qa":
@@ -115,6 +119,7 @@ class MentionScoresHead(nn.Module):
             # mention_bounds = mention_bounds.view(-1, 2)
             # mention_bounds = mention_bounds.unsqueeze(0).expand(mention_scores.size(0), mention_scores.size(1), 2)
 
+            # TODO RESTRICT MAX LENGTH
             # (bs, seqlen, 1); (bs, seqlen, 1); (bs, seqlen, 1)
             start_logprobs, end_logprobs, mention_logprobs = logits.split(1, dim=-1)
             # (bs, seqlen)
@@ -155,8 +160,6 @@ class MentionScoresHead(nn.Module):
             #             except:
             #                 import pdb
             #                 pdb.set_trace()
-            # import pdb
-            # pdb.set_trace()
 
             # DIM: (bs, starts, ends)
             mention_scores += mention_cum_scores
@@ -186,6 +189,28 @@ class MentionScoresHead(nn.Module):
             import pdb
             pdb.set_trace()
             # mention_logits = 
+        
+        if self.max_mention_length is not None:
+            mention_scores, mention_bounds = self.filter_by_mention_size(
+                mention_scores, mention_bounds, self.max_mention_length,
+            )
+
+        return mention_scores, mention_bounds
+    
+    def filter_by_mention_size(self, mention_scores, mention_bounds, max_mention_length):
+        '''
+        Filter all mentions > maximum mention length
+        mention_scores: torch.FloatTensor (bsz, num_mentions)
+        mention_bounds: torch.LongTensor (bsz, num_mentions, 2)
+        '''
+        # (bsz, num_mentions)
+        mention_bounds_mask = (mention_bounds[:,:,1] - mention_bounds[:,:,0] <= max_mention_length)
+        # (bsz, num_filtered_mentions)
+        mention_scores = mention_scores[mention_bounds_mask]
+        mention_scores = mention_scores.view(mention_bounds_mask.size(0),-1)
+        # (bsz, num_filtered_mentions, 2)
+        mention_bounds = mention_bounds[mention_bounds_mask]
+        mention_bounds = mention_bounds.view(mention_bounds_mask.size(0),-1,2)
         return mention_scores, mention_bounds
 
 
@@ -215,6 +240,9 @@ class GetContextEmbedsHead(nn.Module):
             self.mention_agg_mlp = None
 
     def forward(self, bert_output, mention_idxs):
+        '''
+        mention_idxs: both bounds are inclusive [start, end]
+        '''
         # "'all_avg' to average across tokens in mention, 'fl_avg' to average across first/last tokens in mention, "
         # "'{all/fl}_linear' for linear layer over mention, '{all/fl}_mlp' to MLP over mention)",
         # get embedding of [CLS] token

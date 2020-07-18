@@ -5,13 +5,15 @@ import os
 import argparse
 
 
-CHUNK_SIZES = 500000
 
 parser = argparse.ArgumentParser()
 # /private/home/belindali/BLINK/models/entity_encodings/webqsp_none_biencoder
 parser.add_argument('--path_to_saved_chunks', type=str, required=True, help='filepath to directory containing saved chunks')
+parser.add_argument('--chunk_size', type=int, default=1000000, help='size of each chunk')
 # parser.add_argument('--saved_chunks', type=str, required=True, help='comma-separated list of saved chunks (i.e. 0,')
 args = parser.parse_args()
+
+CHUNK_SIZES = args.chunk_size
 
 all_chunks = []
 

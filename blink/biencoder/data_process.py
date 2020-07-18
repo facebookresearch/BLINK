@@ -337,12 +337,37 @@ def get_context_representation_multiple_mentions_left_right(
 #         # "pruned_ents": [1 for i in range(len(all_mentions)) if i < len(mention_idxs) else 0],  # pruned last N entities, TODO change if changed
 #     }
 
+def sort_mentions(
+    lst, sort_map=None,
+):
+    """
+    sort_map: {orig_idx: idx in new "sorted" array}
+    """
+    new_lst = [0 for _ in range(len(lst))]
+    for i in range(len(lst)):
+        new_lst[sort_map[i]] = lst[i]
+    return new_lst
+
+
+def do_sort(
+    sample, orig_idx_to_sort_idx,
+):
+    sample['mentions'] = sort_mentions(sample['mentions'], orig_idx_to_sort_idx)
+    sample['label_id'] = sort_mentions(sample['label_id'], orig_idx_to_sort_idx)
+    sample['wikidata_id'] = sort_mentions(sample['wikidata_id'], orig_idx_to_sort_idx)
+    sample['entity'] = sort_mentions(sample['entity'], orig_idx_to_sort_idx)
+    sample['label'] = sort_mentions(sample['label'], orig_idx_to_sort_idx)
+
 
 def get_context_representation_multiple_mentions_idxs(
     sample, tokenizer, max_seq_length,
     mention_key, context_key, ent_start_token, ent_end_token,
 ):
     '''
+    Also cuts out mentions beyond that context window
+
+    ASSUMES MENTION_IDXS ARE SORTED!!!!
+
     Returns:
         List of mention bounds that are [inclusive, exclusive) (make both inclusive later)
         NOTE: 2nd index of mention bound may be outside of max_seq_length-range (must deal with later)
@@ -350,7 +375,18 @@ def get_context_representation_multiple_mentions_idxs(
     mention_idxs = sample["tokenized_mention_idxs"]
     input_ids = sample["tokenized_text_ids"]
 
-    # fit first mention, then all of the others that can reasonably fit...
+    # sort mentions / entities / everything associated
+    # [[orig_index, [start, end]], ....] --> sort by start, then end
+    sort_tuples = [[i[0], i[1]] for i in sorted(enumerate(mention_idxs), key=lambda x:(x[1][0], x[1][1]))]
+    if [tup[1] for tup in sort_tuples] != mention_idxs:
+        orig_idx_to_sort_idx = {itm[0]: i for i, itm in enumerate(sort_tuples)}
+        assert [tup[1] for tup in sort_tuples] == sort_mentions(mention_idxs, orig_idx_to_sort_idx)
+        mention_idxs = [tup[1] for tup in sort_tuples]
+        sample['tokenized_mention_idxs'] = mention_idxs
+        do_sort(sample, orig_idx_to_sort_idx)
+        # TODO SORT EVERYTHING
+
+    # fit leftmost mention, then all of the others that can reasonably fit...
     all_mention_spans_range = [mention_idxs[0][0], mention_idxs[-1][1]]
     while all_mention_spans_range[1] - all_mention_spans_range[0] + 2 > max_seq_length:
         if len(mention_idxs) == 1:
@@ -386,7 +422,11 @@ def get_context_representation_multiple_mentions_idxs(
 
     # shift mention_idxs
     if len(input_ids) <= max_seq_length - 2:
-        assert input_ids == input_ids_window
+        try:
+            assert input_ids == input_ids_window
+        except:
+            import pdb
+            pdb.set_trace()
     else:
         assert input_ids != input_ids_window
         cut_from_left = len(context_left) - len(context_left[-left_quota:])
@@ -462,6 +502,9 @@ def process_mention_data(
     saved_context_dir=None,
     candidate_token_ids=None,
 ):
+    '''
+    Returns /inclusive/ bounds
+    '''
     extra_ret_values = {}
     if saved_context_dir is not None and os.path.exists(os.path.join(saved_context_dir, "tensor_tuple.pt")):
         data = torch.load(os.path.join(saved_context_dir, "data.pt"))

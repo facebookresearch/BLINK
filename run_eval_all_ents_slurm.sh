@@ -28,8 +28,13 @@
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_false_bert_large_qa_linear' joint 0.25 100 joint_0
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0
 # srun --gpus-per-node=8 --partition=learnfair --time=60 --cpus-per-task 80 --pty -l \
-# bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;6' joint 0.25 100 joint_0 16
-test_questions=$1  # webqsp_filtered/nq/graphqs_filtered
+# bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;6' joint 0.25 100 joint_0 64
+# bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;11' joint 0.25 100 joint_0 64
+# bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_large_qa_linear;2' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_large_qa_linear/all.t7'
+# bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_base_qa_linear/all.t7'
+
+
+test_questions=$1  # WebQSP_EL/AIDA-YAGO2/graphquestions_EL
 subset=$2  # test/dev/train_only
 model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
 ner=$4  # joint/qa_classifier/ngram/single/flair/joint_all_ents_pretokenized
@@ -37,8 +42,9 @@ mention_classifier_threshold=$5  # 0.25
 top_k=$6  # 100
 final_thresholding=$7  # top_joint_by_mention / top_entity_by_mention / joint_0
 eval_batch_size=$8  # 64
+entity_encoding=$9  # file for entity encoding
 debug="false"  # "true"/<anything other than "true"> (does debug_cross)
-gpu="true"
+gpu="false"
 
 export PYTHONPATH=.
 
@@ -57,7 +63,7 @@ then
     save_dir_batch="_realtime_test"
 fi
 
-mentions_file="/checkpoint/belindali/entity_link/data/AIDA-YAGO2/tokenized/${subset}.jsonl"
+mentions_file="/checkpoint/belindali/entity_link/data/${test_questions}/tokenized/${subset}.jsonl"
 
 mention_classifier_threshold_args="--mention_classifier_threshold ${mention_classifier_threshold}"
 echo $mention_classifier_threshold_args
@@ -82,18 +88,25 @@ then
     if [ "${model}" = "finetuned_webqsp" ]
     then
         dir="webqsp"
+        biencoder_config=/checkpoint/belindali/entity_link/saved_models/${dir}/${MODEL_PARSE[1]}/training_params.txt
+        biencoder_model=/checkpoint/belindali/entity_link/saved_models/${dir}/${model_folder}/pytorch_model.bin
     elif [ "${model}" = "finetuned_webqsp_all_ents" ]
     then
         dir="webqsp_all_ents"
+        biencoder_config=/checkpoint/belindali/entity_link/saved_models/${dir}/${MODEL_PARSE[1]}/training_params.txt
+        biencoder_model=/checkpoint/belindali/entity_link/saved_models/${dir}/${model_folder}/pytorch_model.bin
     elif [ "${model}" = "wiki_all_ents" ]
     then
         dir="wiki_all_ents"
+        biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
+        biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
     else
         dir="pretrain"
     fi
-    biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
-    biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
-    entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
+    if [ "${entity_encoding}" = "" ]
+    then
+        entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
+    fi
 elif [ "${model}" = "zero_shot" ]
 then
     entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7

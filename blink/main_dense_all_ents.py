@@ -170,6 +170,10 @@ def _run_biencoder(
         cand_dists (List[Array[float]]) [(# of pred mentions, cands_per_mention) x exs]: candidate score component (- mention) score
     """
     biencoder.model.eval()
+    biencoder_model = biencoder.model
+    if hasattr(biencoder.model, "module"):
+        biencoder_model = biencoder.model.module
+
     labels = []
     context_inputs = []
     nns = []
@@ -188,10 +192,16 @@ def _run_biencoder(
         context_input, _, label_ids, mention_idxs, mention_idxs_mask = batch
         with torch.no_grad():
             token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
-            context_encoding, _, _ = biencoder.model.context_encoder.bert_model(
+            if device != "cpu":
+                token_idx_ctxt = token_idx_ctxt.to(device)
+                segment_idx_ctxt = segment_idx_ctxt.to(device)
+                mask_ctxt = mask_ctxt.to(device)
+            # import pdb
+            # pdb.set_trace()
+            context_encoding, _, _ = biencoder_model.context_encoder.bert_model(
                 token_idx_ctxt, segment_idx_ctxt, mask_ctxt,  # what is segment IDs?
             )
-            mention_logits, mention_bounds = biencoder.model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
+            mention_logits, mention_bounds = biencoder_model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
 
             '''
             topK_mention_scores, mention_pos = torch.cat([torch.arange(), mention_logits.topk(top_k, dim=1)])
@@ -207,7 +217,7 @@ def _run_biencoder(
             # (bsz, top_k); (bsz, top_k)
             top_mention_logits, mention_pos_2 = mention_logits.topk(top_k)
             # 2nd part of OR for if nothing is > 0
-            mention_pos_2 = torch.stack([torch.arange(mention_pos_2.size(0)).unsqueeze(-1).expand_as(mention_pos_2), mention_pos_2], dim=-1)
+            mention_pos_2 = torch.stack([torch.arange(mention_pos_2.size(0)).to(mention_pos_2.device).unsqueeze(-1).expand_as(mention_pos_2), mention_pos_2], dim=-1)
             mention_pos_2_mask = torch.sigmoid(top_mention_logits) >= mention_classifier_threshold
             # [overall mentions, 2]
             mention_pos_2 = mention_pos_2[mention_pos_2_mask | (mention_pos_2_mask.sum(1) == 0).unsqueeze(-1)]
@@ -230,9 +240,9 @@ def _run_biencoder(
 
             # take highest scoring mention
             # (bs, num_mentions, embed_dim)
-            embedding_ctxt = biencoder.model.classification_heads['get_context_embeds'](context_encoding, mention_idxs)
-            if biencoder.model.linear_compression is not None:
-                embedding_ctxt = biencoder.model.linear_compression(embedding_ctxt)
+            embedding_ctxt = biencoder_model.classification_heads['get_context_embeds'](context_encoding, mention_idxs)
+            if biencoder_model.linear_compression is not None:
+                embedding_ctxt = biencoder_model.linear_compression(embedding_ctxt)
 
             # (num_total_mentions, embed_dim)
             embedding_ctxt = embedding_ctxt[mention_pos_mask]
@@ -314,32 +324,6 @@ def _run_biencoder(
             # DIM (total_num_mentions, 1)
             # label_ids = label_ids.expand(chosen_mention_bounds.size(0), chosen_mention_bounds.size(1))[mention_pos_mask_reconstruct].unsqueeze(-1)
 
-        # for i, instance in enumerate(chosen_mention_bounds):
-        #     new_sample_to_all_context_inputs.append([])
-        #     # if len(chosen_mention_bounds[i][mention_pos_mask_reconstruct[i]]) == 0:
-        #     #     new_samples.append({})
-        #     #     for key in samples[sample_idx]:
-        #     #         if key != "context_left" and key != "context_right" and key != "mention":
-        #     #             new_samples[ctxt_idx][key] = samples[sample_idx][key]
-        #     for j, mention_bound in enumerate(chosen_mention_bounds[i][mention_pos_mask_reconstruct[i]]):
-        #         new_sample_to_all_context_inputs[sample_idx].append(ctxt_idx)
-        #         context_left = _decode_tokens(biencoder.tokenizer, context_input[i].tolist()[:mention_bound[0]]) + " "
-        #         context_right = " " + _decode_tokens(biencoder.tokenizer, context_input[i].tolist()[mention_bound[1] + 1:])  # mention bound is inclusive
-        #         mention = _decode_tokens(
-        #             biencoder.tokenizer,
-        #             context_input[i].tolist()[mention_bound[0]:mention_bound[1] + 1]
-        #         )
-        #         new_samples.append({
-        #             "context_left": context_left,
-        #             "context_right": context_right,
-        #             "mention": mention,
-        #         })
-        #         for key in samples[sample_idx]:
-        #             if key != "context_left" and key != "context_right" and key != "mention":
-        #                 new_samples[ctxt_idx][key] = samples[sample_idx][key]
-        #         ctxt_idx += 1
-        #     sample_idx += 1
-
         dist, indices = scores.sort(descending=True)
         indices = torch.gather(cand_indices, -1, indices)
         # Do all reconstructions
@@ -355,9 +339,9 @@ def _run_biencoder(
         cand_dist = cand_dist_reconstruct
         
         # [(max_num_mentions_gold) x exs] <= (bsz, max_num_mentions_gold)
-        labels.extend(label_ids.data.numpy())
+        labels.extend(label_ids.data.cpu().numpy())
         # [(seqlen) x exs] <= (bsz, seqlen)
-        context_inputs.extend(context_input.data.numpy())
+        context_inputs.extend(context_input.data.cpu().numpy())
         # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=top_k, cands_per_mention)
         nns.extend(indices.data.cpu().numpy())
         # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=top_k, cands_per_mention)
@@ -387,9 +371,9 @@ def _decode_tokens(tokenizer, token_list):
 
 def _retrieve_from_saved_biencoder_outs(save_preds_dir):
     labels = np.load(os.path.join(args.save_preds_dir, "biencoder_labels.npy"))
-    nns = np.load(os.path.join(args.save_preds_dir, "biencoder_nns.npy"))
-    dists = np.load(os.path.join(args.save_preds_dir, "biencoder_dists.npy"))
-    pred_mention_bounds = np.load(os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy"))
+    nns = np.load(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), allow_pickle=True)
+    dists = np.load(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), allow_pickle=True)
+    pred_mention_bounds = np.load(os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy"), allow_pickle=True)
     return labels, nns, dists, pred_mention_bounds
 
 
@@ -527,6 +511,7 @@ def run(
 
         # assert len(samples) == len(labels) == len(nns) == len(dists)
 
+        id2title = json.load(open("models/id2title.json"))
         # save biencoder predictions and print precision/recalls
         num_correct = 0
         num_predicted = 0
@@ -535,6 +520,7 @@ def run(
         num_gold_from_input_window = 0
         save_biencoder_file = os.path.join(args.save_preds_dir, 'biencoder_outs.jsonl')
         all_entity_preds = []
+        errors_f = open(os.path.join(args.save_preds_dir, 'biencoder_errors.jsonl'), 'w')
         # check out no_pred_indices
         with open(save_biencoder_file, 'w') as f:
 
@@ -545,11 +531,12 @@ def run(
             # cand_dists (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
             for batch_num, batch_data in enumerate(dataloader):
                 batch_context, batch_cands, batch_label_ids, batch_mention_idxs, batch_mention_idx_masks = batch_data
-                for b in range(biencoder_params['eval_batch_size']):
+                for b in range(len(batch_context)):
                     i = batch_num * biencoder_params['eval_batch_size'] + b
                     sample = samples[i]
                     input_mention_idxs = batch_mention_idxs[b][batch_mention_idx_masks[b]].tolist()
                     input_label_ids = batch_label_ids[b][batch_label_ids[b] != -1].tolist()
+                    input_context = batch_context[b][batch_context[b] != 0].tolist()  # filter out padding
                     assert len(input_label_ids) == len(input_mention_idxs)
 
                     # (num_pred_mentions, cands_per_mention)
@@ -602,7 +589,7 @@ def run(
                     # prune mention overlaps
                     e_mention_bounds_pruned = []
                     all_pred_entities_pruned = []
-                    mention_masked_utterance = np.zeros(len(sample['tokenized_text_ids']))
+                    mention_masked_utterance = np.zeros(len(input_context))
                     # ensure well-formed-ness, prune overlaps
                     # greedily pick highest scoring, then prune all overlapping
                     for idx, mb in enumerate(e_mention_bounds):
@@ -618,9 +605,9 @@ def run(
                         all_pred_entities_pruned.append(all_pred_entities[idx])
                         mention_masked_utterance[mb[0]:mb[1]] = 1
 
-                    # GET ALIGNED MENTION_IDXS (input is slightly different to model) between ours and gold labels
+                    # GET ALIGNED MENTION_IDXS (input is slightly different to model) between ours and gold labels -- also have to account for BOS
                     gold_input = sample['tokenized_text_ids']
-                    my_input = batch_context[b][1:-1].tolist()  # remove bos and sep
+                    my_input = input_context[1:-1]  # remove bos and sep
                     # return first instance of my_input in gold_input
                     for my_input_start in range(len(gold_input)):
                         if gold_input[my_input_start] == my_input[0] and gold_input[my_input_start:my_input_start+len(my_input)] == my_input:
@@ -659,23 +646,27 @@ def run(
                     #     num_predicted += 1
                     entity_results = {
                         "id": sample["id"],
-                        # "top_ent_id": e_id,
-                        # "all_gold_entities": sample.get("label_id", None),
-                        # "id": e_id,
-                        # "title": e_title,
-                        # "text": e_text,
+                        "pred_triples_string": [
+                            [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
+                            for triple in pred_triples
+                        ],
+                        "gold_triples_string": [
+                            [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
+                            for triple in gold_triples
+                        ],
                         "pred_triples": pred_triples,
                         "gold_triples": gold_triples,
-                        # "pred_mention_bounds": pred_mention_bounds,
-                        # "gold_mention_bounds": gold_mention_bounds,
-                        # "gold_ent_id": sample['label_id'],
                         "scores": distances.tolist(),
                     }
+
+                    if num_correct != len(gold_triples) or num_correct != len(pred_triples):
+                        errors_f.write(json.dumps(entity_results) + "\n")
 
                     all_entity_preds.append(entity_results)
                     f.write(
                         json.dumps(entity_results) + "\n"
                     )
+        errors_f.close()
         print()
         if num_predicted > 0 and num_gold > 0:
             p = float(num_correct) / float(num_predicted)
