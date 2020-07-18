@@ -25,7 +25,9 @@
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
 
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
-# bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_false_bert_large_qa_linear' joint 0.25 100 joint_0
+
+# bash run_eval_slurm.sh webqsp_filtered test 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear' joint 0.25 100 joint_0 
+# bash run_eval_slurm.sh graphqs_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear' joint 0.25 100 joint_0 
 test_questions=$1  # webqsp_filtered/nq/graphqs_filtered
 subset=$2  # test/dev/train_only
 model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
@@ -63,12 +65,14 @@ then
         wc=""
     fi
     # mentions_file=/private/home/belindali/starsem2018-entity-linking/data/WebQSP/input/webqsp.${subset}.entities.${wc}filtered_on_all.json
-    mentions_file=/private/home/belindali/starsem2018-entity-linking/data/WebQSP/input/webqsp.${subset}.entities.${wc}all_pos.filtered_on_all.json
+    # mentions_file=/private/home/belindali/starsem2018-entity-linking/data/WebQSP/input/webqsp.${subset}.entities.${wc}all_pos.filtered_on_all.json
+    mentions_file=/private/home/belindali/starsem2018-entity-linking/data/EL_data/WebQSP_EL/webqsp.${subset}.entities.with_classes.json
     get_predictions="--get_predictions"
 elif [ "${test_questions}" = "graphqs_filtered" ]
 then
     # mentions_file=/private/home/belindali/starsem2018-entity-linking/data/graphquestions/input/graph.${subset}.entities.filtered.json
-    mentions_file=/private/home/belindali/starsem2018-entity-linking/data/graphquestions/input/graph.${subset}.entities.all_pos.filtered_on_all.no_partials.json
+    # mentions_file=/private/home/belindali/starsem2018-entity-linking/data/graphquestions/input/graph.${subset}.entities.all_pos.filtered_on_all.no_partials.json
+    mentions_file=/private/home/belindali/starsem2018-entity-linking/data/EL_data/graphquestions_EL/graph.${subset}.entities.json
     get_predictions="--get_predictions"
 elif [ "${test_questions}" = "nq" ]
 then
@@ -112,8 +116,8 @@ then
     else
         dir="pretrain"
     fi
-    biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
-    biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
+    biencoder_config=/checkpoint/belindali/entity_link/saved_models/${dir}/${MODEL_PARSE[1]}/training_params.txt
+    biencoder_model=/checkpoint/belindali/entity_link/saved_models/${dir}/${model_folder}/pytorch_model.bin
     entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
 # elif [ "${model}" = "finetuned_graphqs" ]
 # then

@@ -1,8 +1,7 @@
 #!/bin/sh
 #SBATCH --output=log/%j.out
 #SBATCH --error=log/%j.err
-#SBATCH --partition=priority
-#SBATCH --comment=emnlpdeadline06/01
+#SBATCH --partition=learnfair
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --signal=USR1
@@ -253,21 +252,20 @@ then
     chunk_end="1000000"
   fi
   
-  directory=${data}
-  echo $directory
+  echo $data
 
-  model_config=experiments/${directory}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}/training_params.txt
-  save_dir=models/entity_encodings/${directory}_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}
+  model_config=experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}/training_params.txt
+  save_dir=models/entity_encodings/${data}_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}
   if [ "${data}" = "pretrain" ]
   then
-    model_path=experiments/${directory}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}/epoch_${epoch}/pytorch_model.bin  # TODO REVISE THIS LATER
-    save_dir=models/entity_encodings/${directory}_${mention_agg_type}_biencoder_${joint_mention_detection}_${context_length}_${epoch}
+    model_path=experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}/epoch_${epoch}/pytorch_model.bin  # TODO REVISE THIS LATER
+    save_dir=models/entity_encodings/${data}_${mention_agg_type}_biencoder_${joint_mention_detection}_${context_length}_${epoch}
   elif [ "${data}" = "zero_shot" ]
   then
     model_path=models/biencoder_wiki_large.bin
     model_config=models/biencoder_wiki_large.json
   else
-    model_path=experiments/${directory}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}/epoch_${epoch}/pytorch_model.bin
+    model_path=experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}/epoch_${epoch}/pytorch_model.bin
   fi
   mkdir -p save_dir
   chmod 777 save_dir
@@ -296,5 +294,6 @@ then
   echo $cmd
   $cmd
   python scripts/merge_candidates.py \
-      --path_to_saved_chunks ${save_dir}
+      --path_to_saved_chunks ${save_dir} \
+      --chunk_size $(( chunk_end - chunk_start ))
 fi
