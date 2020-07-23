@@ -81,30 +81,6 @@ def _print_colorful_prediction(idx, sample, e_id, e_title, e_text, e_url, show_u
     print(to_print)
 
 
-def _annotate(ner_model, input_sentences):
-    ner_output_data = ner_model.predict(input_sentences)
-    sentences = ner_output_data["sentences"]
-    mentions = ner_output_data["mentions"]
-    samples = []
-    for mention in mentions:
-        record = {}
-        record["label"] = "unknown"
-        record["label_id"] = -1
-        # LOWERCASE EVERYTHING !
-        record["context_left"] = sentences[mention["sent_idx"]][
-            : mention["start_pos"]
-        ].lower()
-        record["context_right"] = sentences[mention["sent_idx"]][
-            mention["end_pos"] :
-        ].lower()
-        record["mention"] = mention["text"].lower()
-        record["start_pos"] = int(mention["start_pos"])
-        record["end_pos"] = int(mention["end_pos"])
-        record["sent_idx"] = mention["sent_idx"]
-        samples.append(record)
-    return samples
-
-
 def _load_candidates(
     entity_catalogue, entity_encoding, entity_token_ids, biencoder, max_seq_length,
     get_kbids=True, logger=None,
@@ -118,6 +94,29 @@ def _get_test_samples(
     test_filename, test_entities_path, logger,
     qa_data=False, do_ner="none", debug=False,
 ):
+    """
+    Parses jsonl format with one example per line
+    Each line of the following form
+
+    IF HAVE LABELS
+    {
+        "id": "WebQTest-12",
+        "text": "who is governor of ohio 2011?",
+        "mentions": [[19, 23], [7, 15]],
+        "tokenized_text_ids": [2040, 2003, 3099, 1997, 4058, 2249, 1029],
+        "tokenized_mention_idxs": [[4, 5], [2, 3]],
+        "label_id": [10902, 28422],
+        "wikidata_id": ["Q1397", "Q132050"],
+        "entity": ["Ohio", "Governor"],
+        "label": [list of wikipedia descriptions]
+    }
+
+    IF NO LABELS (JUST PREDICTION)
+    {
+        "id": "WebQTest-12",
+        "text": "who is governor of ohio 2011?",
+    }
+    """
     test_samples = []
     unknown_entity_samples = []
     num_unknown_entity_samples = 0
@@ -136,16 +135,27 @@ def _get_test_samples(
 
 
 def _process_biencoder_dataloader(samples, tokenizer, biencoder_params, logger):
-    tokens_data, tensor_data_tuple, _ = process_mention_data(
-        samples=samples,
-        tokenizer=tokenizer,
-        max_context_length=biencoder_params["max_context_length"],
-        max_cand_length=biencoder_params["max_cand_length"],
-        silent=False,
-        logger=logger,
-        debug=biencoder_params["debug"],
-        add_mention_bounds=(not biencoder_params.get("no_mention_bounds", False)),
-    )
+    if 'label_id' in samples[0]:
+        # have labels
+        tokens_data, tensor_data_tuple, _ = process_mention_data(
+            samples=samples,
+            tokenizer=tokenizer,
+            max_context_length=biencoder_params["max_context_length"],
+            max_cand_length=biencoder_params["max_cand_length"],
+            silent=False,
+            logger=logger,
+            debug=biencoder_params["debug"],
+            add_mention_bounds=(not biencoder_params.get("no_mention_bounds", False)),
+        )
+    else:
+        samples_text_tuple = []
+        max_seq_len = 0
+        for sample in samples:
+            samples_text_tuple
+            encoded_sample = [101] + tokenizer.encode(sample['text']) + [102]
+            max_seq_len = max(len(encoded_sample), max_seq_len)
+            samples_text_tuple.append(encoded_sample + [0 for _ in range(biencoder_params["max_context_length"] - len(encoded_sample))])
+        tensor_data_tuple = [torch.tensor(samples_text_tuple)]
     tensor_data = TensorDataset(*tensor_data_tuple)
     sampler = SequentialSampler(tensor_data)
     dataloader = DataLoader(
@@ -154,33 +164,74 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params, logger):
     return dataloader
 
 
+def _batch_reshape_mask_left(
+    input_t, selected, pad_idx=0, left_align_mask=None
+):
+    """
+    Left-aligns all ``selected" values in input_t, which is a batch of examples.
+        - input_t: >=2D tensor (N, M, *)
+        - selected: 2D torch.Bool tensor, 2 dims same size as first 2 dims of `input_t` (N, M) 
+        - pad_idx represents the padding to be used in the output
+        - left_align_mask: if already precomputed, pass the alignment mask in
+    Example:
+        input_t  = [[1,2,3,4],[5,6,7,8]]
+        selected = [[0,1,0,1],[1,1,0,1]]
+        output   = [[2,4,0],[5,6,8]]
+    """
+    batch_num_selected = selected.sum(1)
+    max_num_selected = batch_num_selected.max()
+
+    # (bsz, 2)
+    repeat_freqs = torch.stack([batch_num_selected, max_num_selected - batch_num_selected], dim=-1)
+    # (bsz x 2,)
+    repeat_freqs = repeat_freqs.view(-1)
+
+    if left_align_mask is None:
+        # (bsz, 2)
+        left_align_mask = torch.zeros(input_t.size(0), 2).to(input_t.device).bool()
+        left_align_mask[:,0] = 1
+        # (bsz x 2,): [1,0,1,0,...]
+        left_align_mask = left_align_mask.view(-1)
+        # (bsz x max_num_selected,): [1 xrepeat_freqs[0],0 x(M-repeat_freqs[0]),1 xrepeat_freqs[1],0 x(M-repeat_freqs[1]),...]
+        left_align_mask = left_align_mask.repeat_interleave(repeat_freqs)
+        # (bsz, max_num_selected)
+        left_align_mask = left_align_mask.view(-1, max_num_selected)
+
+    # reshape to (bsz, max_num_selected, *)
+    input_reshape = torch.Tensor(left_align_mask.size() + input_t.size()[2:]).to(input_t.device, input_t.dtype).fill_(pad_idx)
+    input_reshape[left_align_mask] = input_t[selected]
+    # (bsz, max_num_selected, *); (bsz, max_num_selected)
+    return input_reshape, left_align_mask
+
+
 def _run_biencoder(
     args, biencoder, dataloader, candidate_encoding, samples,
     top_k=100, device="cpu", jointly_extract_mentions=False,
     sample_to_all_context_inputs=None, num_mentions=10,  # TODO don't hardcode
-    mention_classifier_threshold=0.25,
+    mention_classifier_threshold=0.0,
     cand_encs_flat_index=None,
 ):
     """
     Returns: tuple
-        labels (List[int]) [(max_num_mentions_gold) x exs]: gold labels
+        labels (List[int]) [(max_num_mentions_gold) x exs]: gold labels -- returns None if no labels
         nns (List[Array[int]]) [(# of pred mentions, cands_per_mention) x exs]: predicted entity IDs in each example
         dists (List[Array[float]]) [(# of pred mentions, cands_per_mention) x exs]: scores of each entity in nns
         pred_mention_bounds (List[Array[int]]) [(# of pred mentions, 2) x exs]: predicted mention boundaries in each examples
-        cand_dists (List[Array[float]]) [(# of pred mentions, cands_per_mention) x exs]: candidate score component (- mention) score
+        mention_scores (List[Array[float]]) [(# of pred mentions,) x exs]: mention score logit
+        cand_scores (List[Array[float]]) [(# of pred mentions, cands_per_mention) x exs]: candidate score logit
     """
     biencoder.model.eval()
     biencoder_model = biencoder.model
     if hasattr(biencoder.model, "module"):
         biencoder_model = biencoder.model.module
 
-    labels = []
     context_inputs = []
     nns = []
     dists = []
     mention_dists = []
     pred_mention_bounds = []
-    cand_dists = []
+    mention_scores = []
+    cand_scores = []
     sample_idx = 0
     ctxt_idx = 0
     new_samples = samples
@@ -188,193 +239,162 @@ def _run_biencoder(
     if jointly_extract_mentions:
         new_samples = []
         new_sample_to_all_context_inputs = []
+    label_ids = None
     for step, batch in enumerate(tqdm(dataloader)):
-        context_input, _, label_ids, mention_idxs, mention_idxs_mask = batch
+        context_input = batch[0]
         with torch.no_grad():
             token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
             if device != "cpu":
                 token_idx_ctxt = token_idx_ctxt.to(device)
                 segment_idx_ctxt = segment_idx_ctxt.to(device)
                 mask_ctxt = mask_ctxt.to(device)
-            # import pdb
-            # pdb.set_trace()
+            
+            '''
+            PREPARE INPUTS
+            '''
+            # (bsz, seqlen, embed_dim)
             context_encoding, _, _ = biencoder_model.context_encoder.bert_model(
-                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,  # what is segment IDs?
+                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
             )
+
+            '''
+            GET MENTION SCORES
+            '''
+            # (num_total_mentions,); (num_total_mentions,)
             mention_logits, mention_bounds = biencoder_model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
 
+            '''
+            PRUNE MENTIONS BASED ON SCORES (for each instance in batch, TOP_K (>= -inf) OR THRESHOLD)
+            '''
             '''
             topK_mention_scores, mention_pos = torch.cat([torch.arange(), mention_logits.topk(top_k, dim=1)])
             mention_pos = mention_pos.flatten()
             '''
             # DIM (num_total_mentions, embed_dim)
-            # mention_pos = (torch.sigmoid(mention_logits) >= mention_classifier_threshold).nonzero()
-            # import pdb
-            # pdb.set_trace()
-            # start_time = time.time()
-            # mention_pos = (torch.sigmoid(mention_logits) >= 0.2).nonzero()
-            # end_time = time.time()
             # (bsz, top_k); (bsz, top_k)
-            top_mention_logits, mention_pos_2 = mention_logits.topk(top_k)
+            top_mention_logits, mention_pos = mention_logits.topk(top_k, sorted=True)
             # 2nd part of OR for if nothing is > 0
-            mention_pos_2 = torch.stack([torch.arange(mention_pos_2.size(0)).to(mention_pos_2.device).unsqueeze(-1).expand_as(mention_pos_2), mention_pos_2], dim=-1)
-            mention_pos_2_mask = torch.sigmoid(top_mention_logits) >= mention_classifier_threshold
-            # [overall mentions, 2]
-            mention_pos_2 = mention_pos_2[mention_pos_2_mask | (mention_pos_2_mask.sum(1) == 0).unsqueeze(-1)]
-            mention_pos_2 = mention_pos_2.view(-1, 2)
-            # end_time_2 = time.time()
-            # print(end_time - start_time)
-            # print(end_time_2 - end_time)
-            # tuples of (instance in batch, mention id) of what to include
-            mention_pos = mention_pos_2
-            # TODO MAYBE TOP K HERE??
-            # '''
-
-            # mention_pos_mask = torch.sigmoid(mention_logits) > 0.25
-            # reshape back to (bs, num_mentions) mask
+            # DIM (bsz, top_k, 2)
+            #   [:,:,0]: index of batch
+            #   [:,:,1]: index into top mention in mention_bounds
+            mention_pos = torch.stack([torch.arange(mention_pos.size(0)).to(mention_pos.device).unsqueeze(-1).expand_as(mention_pos), mention_pos], dim=-1)
+            # DIM (bsz, top_k)
+            top_mention_pos_mask = torch.sigmoid(top_mention_logits) >= mention_classifier_threshold
+            # DIM (total_possible_mentions, 2)
+            #   tuples of [index of batch, index into mention_bounds] of what mentions to include
+            mention_pos = mention_pos[top_mention_pos_mask | (
+                # If nothing is > threshold, use topK that are > -inf (2nd part of OR)
+                ((top_mention_pos_mask.sum(1) == 0).unsqueeze(-1)) & (top_mention_logits > -float("inf"))
+            )]  #(mention_pos_2_mask.sum(1) == 0).unsqueeze(-1)]
+            mention_pos = mention_pos.view(-1, 2)
+            # DIM (bs, total_possible_mentions)
+            #   mask of possible logits
             mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
-            mention_pos_mask[mention_pos_2[:,0], mention_pos_2[:,1]] = 1
-            # (bs, num_mentions, 2)
-            mention_idxs = mention_bounds.clone()
-            mention_idxs[~mention_pos_mask] = 0
+            mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
+            # DIM (bs, max_num_pred_mentions, 2)
+            chosen_mention_bounds, left_align_mask = _batch_reshape_mask_left(mention_bounds, mention_pos_mask, pad_idx=0)
+            # DIM (bs, max_num_pred_mentions)
+            chosen_mention_logits, _ = _batch_reshape_mask_left(mention_logits, mention_pos_mask, pad_idx=-float("inf"), left_align_mask=left_align_mask)
 
-            # take highest scoring mention
-            # (bs, num_mentions, embed_dim)
-            embedding_ctxt = biencoder_model.classification_heads['get_context_embeds'](context_encoding, mention_idxs)
+            '''
+            GET CANDIDATE SCORES + TOP CANDIDATES PER MENTION
+            '''
+            # (bs, max_num_pred_mentions, embed_dim)
+            embedding_ctxt = biencoder_model.classification_heads['get_context_embeds'](context_encoding, chosen_mention_bounds)
             if biencoder_model.linear_compression is not None:
                 embedding_ctxt = biencoder_model.linear_compression(embedding_ctxt)
-
-            # (num_total_mentions, embed_dim)
-            embedding_ctxt = embedding_ctxt[mention_pos_mask]
-            # (num_total_mentions, 2)
-            mention_idxs = mention_idxs[mention_pos_mask]
-
+            # (all_pred_mentions_batch, embed_dim)
+            embedding_ctxt = embedding_ctxt[left_align_mask]
             # DIM (num_total_mentions, num_candidates)
             # TODO search for topK entities with FAISS
-            # start_time = time.time()
-            if embedding_ctxt.size(0) > 1:
-                cand_scores = embedding_ctxt.squeeze(0).mm(candidate_encoding.to(device).t())
-            else:
-                cand_scores = embedding_ctxt.mm(candidate_encoding.to(device).t())
-            # end_time = time.time()
-            # cand_scores = torch.log_softmax(cand_scores, 1)
-            cand_dist, cand_indices = cand_scores.topk(10)  # TODO DELETE
-            cand_scores = torch.log_softmax(cand_dist, 1)
-            # back into (num_total_mentions, num_candidates)
-            # cand_scores_reconstruct = torch.ones(embedding_ctxt.size(0), candidate_encoding.size(0), dtype=cand_scores.dtype).to(cand_scores.device) * -float("inf")
-            # # # DIM (bs, max_pred_mentions, num_candidates)
-            # cand_scores_reconstruct[torch.arange(cand_scores_reconstruct.size(0)).unsqueeze(-1), cand_indices] = cand_scores
-            # reconstruct_time = time.time()
-            # cand_scores = cand_scores_reconstruct
-            # print(top_time - softmax_time)
-            # print(soft_time - top_time)
-            # print(reconstruct_time - soft_time)
-            # reconstruct_time = time.time()
-            # print(softmax_time - end_time)
-            # print(reconstruct_time - softmax_time)
+            try:
+                # start_time = time.time()
+                if embedding_ctxt.size(0) > 1:
+                    embedding_ctxt = embedding_ctxt.squeeze(0)
+                # DIM (all_pred_mentions_batch, all_cand_entities)
+                cand_logits = embedding_ctxt.mm(candidate_encoding.to(device).t())
+                # end_time = time.time()
+                # DIM (all_pred_mentions_batch, 10); (all_pred_mentions_batch, 10)
+                top_cand_logits_shape, top_cand_indices_shape = cand_logits.topk(10, dim=-1, sorted=True)
+            except:
+                # for memory savings, go through one chunk of candidates at a time
+                SPLIT_SIZE=1000000
+                done=False
+                while not done:
+                    top_cand_logits_list = []
+                    top_cand_indices_list = []
+                    max_chunk = int(len(candidate_encoding) / SPLIT_SIZE)
+                    for chunk_idx in range(max_chunk):
+                        try:
+                            # DIM (num_total_mentions, 10); (num_total_mention, 10)
+                            top_cand_logits, top_cand_indices = embedding_ctxt.mm(candidate_encoding[chunk_idx*SPLIT_SIZE:(chunk_idx+1)*SPLIT_SIZE].to(device).t()).topk(10, dim=-1, sorted=True)
+                            top_cand_logits_list.append(top_cand_logits)
+                            top_cand_indices_list.append(top_cand_indices + chunk_idx*SPLIT_SIZE)
+                        except:
+                            SPLIT_SIZE = int(SPLIT_SIZE/2)
+                            break
+                    if len(top_cand_indices_list) == max_chunk:
+                        # DIM (num_total_mentions, 10); (num_total_mentions, 10) --> top_top_cand_indices_shape indexes into top_cand_indices
+                        top_cand_logits_shape, top_top_cand_indices_shape = torch.cat(top_cand_logits_list, dim=-1).topk(10, dim=-1, sorted=True)
+                        # make indices index into candidate_encoding
+                        # DIM (num_total_mentions, max_chunk*10)
+                        all_top_cand_indices = torch.cat(top_cand_indices_list, dim=-1)
+                        # DIM (num_total_mentions, 10)
+                        top_cand_indices_shape = all_top_cand_indices.gather(-1, top_top_cand_indices_shape)
+                        done = True
 
-            # scores = F.log_softmax(cand_scores, dim=-1)
-            # softmax_time = time.time()
-            # cand_scores, _ = cand_encs_flat_index.search(embedding_ctxt.contiguous().detach().cpu().numpy(), top_k)
-            # cand_scores = torch.tensor(cand_scores)
-            # # reconstruct cand_scores to (bs, num_candidates)
-            # faiss_time = time.time()
-            # print(end_time - start_time)
-            # print(softmax_time - end_time)
-            # print(faiss_time - softmax_time)
-            # DIM (num_total_mentions, num_candidates)
+            # DIM (bs, max_num_pred_mentions, 10)
+            top_cand_logits = torch.zeros(chosen_mention_logits.size(0), chosen_mention_logits.size(1), top_cand_logits_shape.size(-1)).to(
+                top_cand_logits_shape.device, top_cand_logits_shape.dtype)
+            top_cand_logits[left_align_mask] = top_cand_logits_shape
+            top_cand_indices = torch.zeros(chosen_mention_logits.size(0), chosen_mention_logits.size(1), top_cand_indices_shape.size(-1)).to(
+                top_cand_indices_shape.device, top_cand_indices_shape.dtype)
+            top_cand_indices[left_align_mask] = top_cand_indices_shape
+
+            '''
+            COMPUTE FINAL SCORES FOR EACH CAND-MENTION PAIR + PRUNE USING IT
+            '''
+            # Has NAN for impossible mentions...
+            # DIM (bs, max_num_pred_mentions, 10)
+            scores = torch.log_softmax(top_cand_logits, -1)
             if args.final_thresholding != "top_entity_by_mention":
                 # DIM (num_total_mentions, num_candidates)
                 # log p(entity && mb) = log [p(entity|mention bounds) * p(mention bounds)] = log p(e|mb) + log p(mb)
                 # scores += torch.sigmoid(mention_logits)[mention_pos_mask].unsqueeze(-1)
-                mention_scores = mention_logits[mention_pos_mask].unsqueeze(-1)
-            # DIM (num_total_mentions, num_candidates)
-            # scores = torch.log_softmax(cand_scores, 1) + torch.sigmoid(mention_scores)
-            scores = cand_scores + torch.sigmoid(mention_scores)
-            mention_scores = mention_scores.expand_as(cand_scores)
+                # DIM (num_total_mentions, num_candidates)
+                # scores = torch.log_softmax(cand_scores, 1) + torch.sigmoid(mention_scores)
+                # Is NAN for impossible mentions...
+                # DIM (bs, max_num_pred_mentions, 10)
+                scores += torch.sigmoid(chosen_mention_logits.unsqueeze(-1))
+            # mention_scores = mention_scores.expand_as(cand_scores)
 
-            # # # DIM (bs, max_pred_mentions, num_candidates)
-            # scores_reconstruct = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max(), scores.size(-1), dtype=scores.dtype).to(scores.device)
-            # # DIM (bs, max_pred_mentions)
-            mention_pos_mask_reconstruct = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max()).bool().to(mention_pos_mask.device)
-            for i in range(mention_pos_mask_reconstruct.size(1)): mention_pos_mask_reconstruct[:, i] = i < mention_pos_mask.sum(1)
-            # # # DIM (bs, max_pred_mentions, num_candidates)
-            # scores_reconstruct[mention_pos_mask_reconstruct] = scores
-            # scores = scores_reconstruct
+            '''
+            DON'T NEED TO RESORT BY NEW SCORE -- DISTANCE PRESERVING (largest entity score still be largest entity score)
+            '''
+    
+            for idx in range(len(batch[0])):
+                # TODO do with masking....!!!
+                # [(seqlen) x exs] <= (bsz, seqlen)
+                context_inputs.append(context_input[idx][mask_ctxt[idx]].data.cpu().numpy())
+                # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=top_k, cands_per_mention)
+                nns.append(top_cand_indices[idx][left_align_mask[idx]].data.cpu().numpy())
+                # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=top_k, cands_per_mention)
+                dists.append(scores[idx][left_align_mask[idx]].data.cpu().numpy())
+                # [(max_num_mentions, 2) x exs] <= (bsz, max_num_mentions=top_k, 2)
+                pred_mention_bounds.append(chosen_mention_bounds[idx][left_align_mask[idx]].data.cpu().numpy())
+                # [(max_num_mentions,) x exs] <= (bsz, max_num_mentions=top_k)
+                mention_scores.append(chosen_mention_logits[idx][left_align_mask[idx]].data.cpu().numpy())
+                # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=top_k, cands_per_mention)
+                cand_scores.append(top_cand_logits[idx][left_align_mask[idx]].data.cpu().numpy())
 
-            # # DIM (bs, max_pred_mentions, num_candidates)
-            # cand_scores_reconstruct = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max(), scores.size(-1), dtype=scores.dtype).to(scores.device)
-            # # DIM (bs, max_pred_mentions, num_candidates)
-            # cand_scores_reconstruct[mention_pos_mask_reconstruct] = cand_scores
-            # cand_scores = cand_scores_reconstruct
-
-            # DIM (bs, max_pred_mentions, 2)
-            chosen_mention_bounds = torch.zeros(mention_pos_mask.size(0), mention_pos_mask.sum(1).max(), 2, dtype=mention_idxs.dtype).to(mention_idxs.device)
-            chosen_mention_bounds[mention_pos_mask_reconstruct] = mention_idxs
-
-            # mention_idxs = mention_idxs.view(topK_mention_bounds.size(0), topK_mention_bounds.size(1), 2)
-            # assert (mention_idxs == topK_mention_bounds).all()
-
-            # DIM (total_num_mentions, num_cands)
-            # scores = scores[mention_pos_mask_reconstruct]
-            # cand_scores = cand_scores[mention_pos_mask_reconstruct]
-            # mention_scores = scores - 0.4 * cand_scores - 0.9  # project to dimension of scores
-
-            # expand labels
-            # DIM (total_num_mentions, 1)
-            # label_ids = label_ids.expand(chosen_mention_bounds.size(0), chosen_mention_bounds.size(1))[mention_pos_mask_reconstruct].unsqueeze(-1)
-
-        dist, indices = scores.sort(descending=True)
-        indices = torch.gather(cand_indices, -1, indices)
-        # Do all reconstructions
-        # (bsz, max_num_mentions=top_k, cands_per_mention)
-        indices_reconstruct = -torch.ones(mention_pos_mask.size(0), mention_pos_mask.sum(1).max(), indices.size(-1), dtype=indices.dtype).to(indices.device)
-        dist_reconstruct = indices_reconstruct.clone().float()
-        cand_dist_reconstruct = dist_reconstruct.clone()
-        indices_reconstruct[mention_pos_mask_reconstruct] = indices
-        dist_reconstruct[mention_pos_mask_reconstruct] = dist
-        cand_dist_reconstruct[mention_pos_mask_reconstruct] = cand_dist
-        indices = indices_reconstruct
-        dist = dist_reconstruct
-        cand_dist = cand_dist_reconstruct
-        
-        # [(max_num_mentions_gold) x exs] <= (bsz, max_num_mentions_gold)
-        labels.extend(label_ids.data.cpu().numpy())
-        # [(seqlen) x exs] <= (bsz, seqlen)
-        context_inputs.extend(context_input.data.cpu().numpy())
-        # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=top_k, cands_per_mention)
-        nns.extend(indices.data.cpu().numpy())
-        # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=top_k, cands_per_mention)
-        dists.extend(dist.data.cpu().numpy())
-        # [(max_num_mentions, 2) x exs] <= (bsz, max_num_mentions=top_k, 2)
-        pred_mention_bounds.extend(chosen_mention_bounds.data.cpu().numpy())
-        # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=top_k, cands_per_mention)
-        cand_dists.extend(cand_dist.data.cpu().numpy())
-        assert len(labels) == len(nns)
-        assert len(labels) == len(dists)
-        sys.stdout.write("{}/{} \r".format(step, len(dataloader)))
-        sys.stdout.flush()
-    # if jointly_extract_mentions:
-    #     assert sample_idx == len(new_sample_to_all_context_inputs)
-    #     assert ctxt_idx == len(new_samples)
-    return labels, nns, dists, pred_mention_bounds, cand_dists  #, new_samples, new_sample_to_all_context_inputs
-
-
-def _decode_tokens(tokenizer, token_list):
-    decoded_string = tokenizer.decode(token_list)
-    if isinstance(decoded_string, list):
-        decoded_string = decoded_string[0] if len(decoded_string) > 0 else ""
-    if "[CLS]" in decoded_string:
-        decoded_string = decoded_string[len('[CLS] '):].strip()  # disrgard CLS token
-    return decoded_string
+    return nns, dists, pred_mention_bounds, mention_scores, cand_scores  #, new_samples, new_sample_to_all_context_inputs
 
 
 def _retrieve_from_saved_biencoder_outs(save_preds_dir):
-    labels = np.load(os.path.join(args.save_preds_dir, "biencoder_labels.npy"))
     nns = np.load(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), allow_pickle=True)
     dists = np.load(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), allow_pickle=True)
     pred_mention_bounds = np.load(os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy"), allow_pickle=True)
-    return labels, nns, dists, pred_mention_bounds
+    return nns, dists, pred_mention_bounds
 
 
 def load_models(args, logger):
@@ -398,6 +418,8 @@ def load_models(args, logger):
     if biencoder_params["no_cuda"]:
         biencoder_params["data_parallel"] = False
     biencoder_params["load_cand_enc_only"] = False
+    if getattr(args, 'max_context_length', None) is not None:
+        biencoder_params["max_context_length"] = args.max_context_length
     # biencoder_params["mention_aggregation_type"] = args.mention_aggregation_type
     biencoder = load_biencoder(biencoder_params)
     if not args.use_cuda and type(biencoder.model).__name__ == 'DataParallel':
@@ -484,7 +506,7 @@ def run(
             logger.info("Running biencoder...")
 
             start_time = time.time()
-            labels, nns, dists, pred_mention_bounds, cand_dists = _run_biencoder(
+            nns, dists, pred_mention_bounds, mention_scores, cand_scores = _run_biencoder(
                 args, biencoder, dataloader, candidate_encoding, samples=samples,
                 top_k=args.top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
                 jointly_extract_mentions=("joint" in args.do_ner),
@@ -497,21 +519,24 @@ def run(
 
             runtime = end_time - start_time
             
-            np.save(os.path.join(args.save_preds_dir, "biencoder_labels.npy"), labels)
             np.save(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), nns)
             np.save(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), dists)
             np.save(os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy"), pred_mention_bounds)
-            np.save(os.path.join(args.save_preds_dir, "biencoder_cand_dists.npy"), cand_dists)
+            np.save(os.path.join(args.save_preds_dir, "biencoder_cand_scores.npy"), cand_scores)
+            np.save(os.path.join(args.save_preds_dir, "biencoder_mention_scores.npy"), mention_scores)
             # json.dump(sample_to_all_context_inputs, open(os.path.join(args.save_preds_dir, "sample_to_all_context_inputs.json"), "w"))
             with open(os.path.join(args.save_preds_dir, "runtime.txt"), "w") as wf:
                 wf.write(str(runtime))
         else:
-            labels, nns, dists, pred_mention_bounds = _retrieve_from_saved_biencoder_outs(args.save_preds_dir)
+            nns, dists, pred_mention_bounds = _retrieve_from_saved_biencoder_outs(args.save_preds_dir)
             runtime = float(open(os.path.join(args.save_preds_dir, "runtime.txt")).read())
 
-        # assert len(samples) == len(labels) == len(nns) == len(dists)
+        assert len(samples) == len(nns) == len(dists) == len(pred_mention_bounds)
 
+        logger.info("Loading id2title")
         id2title = json.load(open("models/id2title.json"))
+        logger.info("Finish loading id2title")
+
         # save biencoder predictions and print precision/recalls
         num_correct = 0
         num_predicted = 0
@@ -524,35 +549,29 @@ def run(
         # check out no_pred_indices
         with open(save_biencoder_file, 'w') as f:
 
-            # labels (List[int]) [(max_num_mentions_gold) x exs]
             # nns (List[Array[int]]) [(num_pred_mentions, cands_per_mention) x exs])
             # dists (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
             # pred_mention_bounds (List[Array[int]]) [(num_pred_mentions, 2) x exs]
-            # cand_dists (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
+            # cand_scores (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
+            # mention_scores (List[Array[float]]) [(num_pred_mentions,) x exs])
             for batch_num, batch_data in enumerate(dataloader):
-                batch_context, batch_cands, batch_label_ids, batch_mention_idxs, batch_mention_idx_masks = batch_data
+                batch_context = batch_data[0]
+                if len(batch_data) > 1:
+                    _, batch_cands, batch_label_ids, batch_mention_idxs, batch_mention_idx_masks = batch_data
                 for b in range(len(batch_context)):
                     i = batch_num * biencoder_params['eval_batch_size'] + b
                     sample = samples[i]
-                    input_mention_idxs = batch_mention_idxs[b][batch_mention_idx_masks[b]].tolist()
-                    input_label_ids = batch_label_ids[b][batch_label_ids[b] != -1].tolist()
                     input_context = batch_context[b][batch_context[b] != 0].tolist()  # filter out padding
-                    assert len(input_label_ids) == len(input_mention_idxs)
 
                     # (num_pred_mentions, cands_per_mention)
-                    pred_entity_list = nns[i][nns[i][:,0] != -1]
+                    cands_mask = (dists[i][:,0] != -1) & (dists[i][:,0] == dists[i][:,0])
+                    pred_entity_list = nns[i][cands_mask]
                     if len(pred_entity_list) > 0:
                         e_id = pred_entity_list[0]
-                    distances = dists[i][nns[i][:,0] != -1]
+                    distances = dists[i][cands_mask]
                     # (num_pred_mentions, 2)
-                    entity_mention_bounds_idx = pred_mention_bounds[i][nns[i][:,0] != -1]
-                    # (max_num_mentions_gold)
-                    label = labels[i][labels[i] != -1]
+                    entity_mention_bounds_idx = pred_mention_bounds[i][cands_mask]
                     utterance = sample['text']
-                    gold_mention_bounds = [
-                        sample['text'][ment[0]-10:ment[0]] + "[" + sample['text'][ment[0]:ment[1]] + "]" + sample['text'][ment[1]:ment[1]+10]
-                        for ment in sample['mentions']
-                    ]
 
                     '''
                     get top for each mention bound, w/out duplicates
@@ -563,7 +582,7 @@ def run(
                     if args.final_thresholding == "joint_0":
                         # THRESHOLDING
                         assert utterance is not None
-                        top_mentions = (distances[:,0] > 0).nonzero()[0]
+                        top_mentions = (distances[:,0] > -2).nonzero()[0]
                         # cands already sorted by score
                         all_pred_entities = [pred_entity_list[ment_idx, 0] for ment_idx in top_mentions]
                         e_mention_bounds = [entity_mention_bounds_idx[ment_idx] for ment_idx in top_mentions]
@@ -604,68 +623,98 @@ def run(
                         e_mention_bounds_pruned.append(mb)
                         all_pred_entities_pruned.append(all_pred_entities[idx])
                         mention_masked_utterance[mb[0]:mb[1]] = 1
-
-                    # GET ALIGNED MENTION_IDXS (input is slightly different to model) between ours and gold labels -- also have to account for BOS
-                    gold_input = sample['tokenized_text_ids']
-                    my_input = input_context[1:-1]  # remove bos and sep
-                    # return first instance of my_input in gold_input
-                    for my_input_start in range(len(gold_input)):
-                        if gold_input[my_input_start] == my_input[0] and gold_input[my_input_start:my_input_start+len(my_input)] == my_input:
-                            break
-                    my_input_start -= 1  # for bos
-
-                    # add alignment factor (my_input_start) to predicted mention triples
+    
+                    input_context = input_context[1:-1]  # remove BOS and sep
                     pred_triples = [(
                         # sample['all_gold_entities'][i],
                         str(all_pred_entities_pruned[j]),
-                        int(e_mention_bounds_pruned[j][0] + my_input_start),
-                        int(e_mention_bounds_pruned[j][1] + my_input_start),
+                        int(e_mention_bounds_pruned[j][0]) - 1,  # -1 for BOS
+                        int(e_mention_bounds_pruned[j][1]) - 1,
                     ) for j in range(len(all_pred_entities_pruned))]
-                    gold_triples = [(
-                        str(sample['label_id'][j]),
-                        sample['tokenized_mention_idxs'][j][0], sample['tokenized_mention_idxs'][j][1],
-                    ) for j in range(len(sample['label_id']))]
-                    num_correct += entity_linking_tp_with_overlap(gold_triples, pred_triples)
-                    num_predicted += len(all_pred_entities_pruned)
-                    num_gold += len(sample["label_id"])
 
-                    # compute number correct given the input window
-                    pred_input_window_triples = [(
-                        # sample['all_gold_entities'][i],
-                        str(all_pred_entities_pruned[j]),
-                        int(e_mention_bounds_pruned[j][0]), int(e_mention_bounds_pruned[j][1]),
-                    ) for j in range(len(all_pred_entities_pruned))]
-                    gold_input_window_triples = [(
-                        str(input_label_ids[j]),
-                        input_mention_idxs[j][0], input_mention_idxs[j][1] + 1,
-                    ) for j in range(len(input_label_ids))]
-                    num_correct_from_input_window += entity_linking_tp_with_overlap(gold_input_window_triples, pred_input_window_triples)
-                    num_gold_from_input_window += len(input_mention_idxs)
-
-                    # if sample['label'] is not None:
-                    #     num_predicted += 1
                     entity_results = {
                         "id": sample["id"],
-                        "pred_triples_string": [
-                            [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
-                            for triple in pred_triples
-                        ],
-                        "gold_triples_string": [
-                            [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
-                            for triple in gold_triples
-                        ],
-                        "pred_triples": pred_triples,
-                        "gold_triples": gold_triples,
+                        "text": sample["text"],
                         "scores": distances.tolist(),
                     }
 
-                    if num_correct != len(gold_triples) or num_correct != len(pred_triples):
-                        errors_f.write(json.dumps(entity_results) + "\n")
+                    if 'label_id' in sample:
+                        # Get LABELS
+                        input_mention_idxs = batch_mention_idxs[b][batch_mention_idx_masks[b]].tolist()
+                        input_label_ids = batch_label_ids[b][batch_label_ids[b] != -1].tolist()
+                        assert len(input_label_ids) == len(input_mention_idxs)
+                        gold_mention_bounds = [
+                            sample['text'][ment[0]-10:ment[0]] + "[" + sample['text'][ment[0]:ment[1]] + "]" + sample['text'][ment[1]:ment[1]+10]
+                            for ment in sample['mentions']
+                        ]
+
+                        # GET ALIGNED MENTION_IDXS (input is slightly different to model) between ours and gold labels -- also have to account for BOS
+                        gold_input = sample['tokenized_text_ids']
+                        # return first instance of my_input in gold_input
+                        for my_input_start in range(len(gold_input)):
+                            if (
+                                gold_input[my_input_start] == input_context[0] and
+                                gold_input[my_input_start:my_input_start+len(input_context)] == input_context
+                            ):
+                                break
+
+                        # add alignment factor (my_input_start) to predicted mention triples
+                        pred_triples = [(
+                            triple[0], triple[1] + my_input_start, triple[2] + my_input_start,
+                        ) for triple in pred_triples]
+                        gold_triples = [(
+                            str(sample['label_id'][j]),
+                            sample['tokenized_mention_idxs'][j][0], sample['tokenized_mention_idxs'][j][1],
+                        ) for j in range(len(sample['label_id']))]
+                        num_overlap = entity_linking_tp_with_overlap(gold_triples, pred_triples)
+                        num_correct += num_overlap
+                        num_predicted += len(all_pred_entities_pruned)
+                        num_gold += len(sample["label_id"])
+
+                        # compute number correct given the input window
+                        pred_input_window_triples = [(
+                            # sample['all_gold_entities'][i],
+                            str(all_pred_entities_pruned[j]),
+                            int(e_mention_bounds_pruned[j][0]), int(e_mention_bounds_pruned[j][1]),
+                        ) for j in range(len(all_pred_entities_pruned))]
+                        gold_input_window_triples = [(
+                            str(input_label_ids[j]),
+                            input_mention_idxs[j][0], input_mention_idxs[j][1] + 1,
+                        ) for j in range(len(input_label_ids))]
+                        num_correct_from_input_window += entity_linking_tp_with_overlap(gold_input_window_triples, pred_input_window_triples)
+                        num_gold_from_input_window += len(input_mention_idxs)
+
+                        entity_results.update({
+                            "pred_tuples_string": [
+                                [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
+                                for triple in pred_triples
+                            ],
+                            "gold_tuples_string": [
+                                [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
+                                for triple in gold_triples
+                            ],
+                            "pred_triples": pred_triples,
+                            "gold_triples": gold_triples,
+                            "tokens": sample['tokenized_text_ids'],
+                        })
+
+                        if num_overlap != len(gold_triples) or num_overlap != len(pred_triples):
+                            errors_f.write(json.dumps(entity_results) + "\n")
+                    else:
+                        entity_results.update({
+                            "pred_tuples_string": [
+                                [id2title[triple[0]], tokenizer.decode(input_context[triple[1]:triple[2]])]
+                                for triple in pred_triples
+                            ],
+                            "pred_triples": pred_triples,
+                            "tokens": input_context,
+                        })
 
                     all_entity_preds.append(entity_results)
                     f.write(
                         json.dumps(entity_results) + "\n"
                     )
+
         errors_f.close()
         print()
         if num_predicted > 0 and num_gold > 0:
@@ -795,6 +844,12 @@ if __name__ == "__main__":
         type=int,
         default=8,
         help="Crossencoder's batch size for evaluation",
+    )
+    parser.add_argument(
+        "--max_context_length",
+        dest="max_context_length",
+        type=int,
+        help="Maximum length of context. (Don't set to inherit from training config)",
     )
 
     # output folder
