@@ -96,14 +96,15 @@ def _annotate(ner_model, input_sentences):
 
 
 def _load_candidates(
-    entity_catalogue, entity_encoding, faiss_index=None, index_path=None,
+    entity_catalogue, entity_encoding, faiss_index=None, index_path=None, logger=None
 ):
     # only load candidate encoding if not using faiss index
     if faiss_index is None:
         candidate_encoding = torch.load(entity_encoding)
         indexer = None
     else:
-        logger.info("Using faiss index to retrieve entities.")
+        if logger:
+            logger.info("Using faiss index to retrieve entities.")
         candidate_encoding = None
         assert index_path is not None, "Error! Empty indexer path."
         if faiss_index == "flat":
@@ -312,7 +313,7 @@ def load_models(args, logger=None):
         wikipedia_id2local_id,
         faiss_indexer,
     ) = _load_candidates(
-        args.entity_catalogue, args.entity_encoding, faiss_index=args.faiss_index, index_path=args.index_path,
+        args.entity_catalogue, args.entity_encoding, faiss_index=args.faiss_index, index_path=args.index_path, logger=logger
     )
 
     return (
