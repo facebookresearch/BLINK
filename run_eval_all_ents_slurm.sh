@@ -1,8 +1,7 @@
 #!/bin/sh
-#SBATCH --output=stdout/%j.out
-#SBATCH --error=stderr/%j.err
-#SBATCH --partition=priority
-#SBATCH --comment=emnlpdeadline06/01
+#SBATCH --output=log/%j.out
+#SBATCH --error=log/%j.err
+#SBATCH --partition=learnfair
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --signal=USR1
@@ -27,7 +26,7 @@
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_false_bert_large_qa_linear' joint 0.25 100 joint_0
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0
-# srun --gpus-per-node=8 --partition=learnfair --time=60 --cpus-per-task 80 --pty -l \
+# srun --gpus-per-node=8 --partition=learnfair --time=3000 --cpus-per-task 80 --pty -l \
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;6' joint 0.25 100 joint_0 64
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;11' joint 0.25 100 joint_0 64
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_large_qa_linear;2' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_large_qa_linear/all.t7'
@@ -44,7 +43,7 @@ final_thresholding=$7  # top_joint_by_mention / top_entity_by_mention / joint_0
 eval_batch_size=$8  # 64
 entity_encoding=$9  # file for entity encoding
 debug="false"  # "true"/<anything other than "true"> (does debug_cross)
-gpu="false"
+gpu="true"
 
 export PYTHONPATH=.
 
@@ -103,6 +102,13 @@ then
     else
         dir="pretrain"
     fi
+    if [ "${test_questions}" = "nq" ]
+    then
+        max_context_length_args="--max_context_length 32"
+    elif [ "${test_questions}" = "triviaqa" ]
+    then
+        max_context_length_args="--max_context_length 256"
+    fi
     if [ "${entity_encoding}" = "" ]
     then
         entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
@@ -133,7 +139,7 @@ command="python blink/main_dense_all_ents.py -q \
     --biencoder_config ${biencoder_config} \
     --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_${ner}${mention_classifier_threshold}_top${top_k}cands_final_${final_thresholding}${save_dir_batch} \
     -n joint_all_ents ${mention_classifier_threshold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
-    --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args}"
+    --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args} ${max_context_length_args}"
     # --no_mention_bounds_biencoder --mention_aggregation_type all_avg"
     # --eval_main_entity
 
