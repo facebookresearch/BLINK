@@ -12,8 +12,8 @@ tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 id2title = json.load(open("models/id2title.json"))
 
 all_save_dir = "/checkpoint/belindali/entity_link/saved_preds"
-data = "nq"
-split= "dev"
+data = "WebQSP_EL"
+split= "test"
 model= 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15'
 # model= 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear'
 
@@ -43,8 +43,10 @@ else:
     mention_dists = [np.log(md / (1 - md)) for md in mention_dists]
 
 
-# threshold=-1.9
-threshold=-5
+# threshold=0
+threshold=-2.9
+# threshold=-5
+f1s = []
 new_examples = []
 num_correct=0
 num_predicted=0
@@ -63,9 +65,10 @@ for i, example in enumerate(tqdm(examples)):
     # take only the top cands
     # top_pred_entity = pred_entity_list[:,0]
     # top_entity_mention_bounds_idx = entity_mention_bounds_idx[:,0]
-    
-    # scores_mask = (mention_scores > -3) | (torch.log_softmax(torch.tensor(biencoder_dists[i][cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log() > -2).numpy()
-    scores_mask = (torch.log_softmax(torch.tensor(cand_dists[i][cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log() > threshold).numpy()  # GRAPHQUESTIONS BEST
+    scores = torch.log_softmax(torch.tensor(cand_dists[i][cands_mask]), 1) + torch.sigmoid(torch.tensor(mention_scores)).log().unsqueeze(-1)  # GRAPHQUESTIONS BEST
+    # scores_mask = (mention_scores > -3) | (torch.log_softmax(torch.tensor(cand_dists[i][cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log() > -2).numpy()
+    scores_mask = (scores[:,0] > threshold).numpy()  # GRAPHQUESTIONS BEST
+    # scores_mask = (torch.sigmoid(torch.tensor(mention_scores)) > 0.25).numpy() & (biencoder_dists[i][cands_mask][:,0] > threshold)  # WEBQSP BEST
     # scores_mask = (mention_scores > -3) & (torch.log_softmax(torch.tensor(cand_dists[i][cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log() > -5).numpy()
     # scores_mask = (mention_scores > -3) & (torch.log_softmax(torch.tensor(cand_dists[i][cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log() > -2).numpy()
     # scores_mask = (mention_scores > -5) & ((mention_scores + cand_dists[i][cands_mask][:,0]) > 5)
@@ -74,29 +77,34 @@ for i, example in enumerate(tqdm(examples)):
     # sort...
     # _, sorted_idxs = (torch.log_softmax(torch.tensor(biencoder_dists[i][cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log())[scores_mask].sort()
     # _, sorted_idxs = (torch.log_softmax(torch.tensor(biencoder_dists[i][cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log())[scores_mask].sort()
-    _, sorted_idxs = ((torch.tensor(cand_dists[i][cands_mask]))[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log())[scores_mask].sort(descending=True)
+    _, sorted_idxs = scores[:,0][scores_mask].sort(descending=True)
+    # _, sorted_idxs = torch.tensor(biencoder_dists[i][cands_mask][:,0][scores_mask]).sort(descending=True)  # WEBQSP BEST
     # _, sorted_idxs = torch.tensor(mention_scores[scores_mask]).sort()
-    threshold_entities = pred_entity_list[scores_mask][sorted_idxs]
-    threshold_mention_bounds = entity_mention_bounds_idx[scores_mask][sorted_idxs]
-    threshold_scores = cand_dists[i][cands_mask][scores_mask][sorted_idxs]
-    threshold_mention_scores = mention_scores[scores_mask][sorted_idxs]
+    threshold_entities = pred_entity_list[scores_mask][sorted_idxs]  # (filtered_examples, #cands)
+    threshold_mention_bounds = entity_mention_bounds_idx[scores_mask][sorted_idxs]  # (filtered_examples, 2)
+    threshold_cand_scores = cand_dists[i][cands_mask][scores_mask][sorted_idxs]  # (filtered_examples, #cands)
+    threshold_mention_scores = mention_scores[scores_mask][sorted_idxs]  # (filtered_examples,)
+    threshold_scores = scores[scores_mask]  # (filtered_examples, #cands)
     if len(sorted_idxs) == 1:
         threshold_entities = np.expand_dims(threshold_entities, axis=0)
         threshold_mention_bounds = np.expand_dims(threshold_mention_bounds, axis=0)
-        threshold_scores = np.expand_dims(threshold_scores, axis=0)
+        threshold_cand_scores = np.expand_dims(threshold_scores, axis=0)
         threshold_mention_scores = np.expand_dims(threshold_mention_scores, axis=0)
+        threshold_scores = np.expand_dims(threshold_scores, axis=0)
     # mention_scores = mention_scores[mention_scores > -float("inf")]
     threshold_entities_translate = {}
     pred_triples = []
+    pred_scores = []
     for m in range(len(threshold_entities)):
         mb = threshold_mention_bounds[m].tolist()
         mention_text = tokenizer.decode(example['tokens'][mb[0]-1:mb[1]])
         threshold_entities_translate[mention_text] = {
             "mention_idx": m, "candidate_entities": [],
-            "scores": threshold_scores[m].tolist(),
+            "cand_scores": threshold_cand_scores[m].tolist(),
             "mention_score": float(threshold_mention_scores[m])
         }
         pred_triples.append([str(threshold_entities[m][0]), mb[0]-1, mb[1]])
+        pred_scores.append(threshold_scores[m][0])
         for id in threshold_entities[m]:
             threshold_entities_translate[mention_text]["candidate_entities"].append(id2title[str(id)])
     new_ex = {
@@ -106,6 +114,7 @@ for i, example in enumerate(tqdm(examples)):
     }
     if "gold_triples" in example:
         all_pred_entities_pruned = []
+        all_pred_scores_pruned = []
         mention_masked_utterance = np.zeros(len(example['tokens']))
         # ensure well-formed-ness, prune overlaps
         # greedily pick highest scoring, then prune all overlapping
@@ -120,13 +129,15 @@ for i, example in enumerate(tqdm(examples)):
                 import pdb
                 pdb.set_trace()
             all_pred_entities_pruned.append(mb)
+            all_pred_scores_pruned.append(pred_scores[idx])
             mention_masked_utterance[mb[1]:mb[2]] = 1
     else:
         all_pred_entities_pruned = pred_triples
+        all_pred_scores_pruned = pred_scores
         # all_pred_entities_pruned = []
         # mention_masked_utterance = np.zeros(len(example['tokens']))
-        # ensure well-formed-ness, prune overlaps
-        # greedily pick highest scoring, then prune all overlapping
+        # # ensure well-formed-ness, prune overlaps
+        # # greedily pick highest scoring, then prune all overlapping
         # for idx, mb in enumerate(pred_triples):
         #     if mb[1] >= len(mention_masked_utterance) or mb[2] > len(mention_masked_utterance):
         #         continue
@@ -141,6 +152,7 @@ for i, example in enumerate(tqdm(examples)):
         #     mention_masked_utterance[mb[1]:mb[2]] = 1
     new_ex['pred_mentions'] = threshold_entities_translate
     new_ex['pred_triples'] = all_pred_entities_pruned
+    new_ex['pred_triples_score'] = all_pred_scores_pruned
     new_ex['pred_triples_string'] = [
         [id2title[triple[0]], tokenizer.decode(example['tokens'][triple[1]:triple[2]])]
         for triple in all_pred_entities_pruned
@@ -160,9 +172,10 @@ p = num_correct / num_predicted
 r = num_correct / num_gold
 f1 = 2*p*r / (p+r)
 print(f1)
+f1s.append(f1)
 
 # save
-with open(os.path.join("/checkpoint/belindali/entity_link/data/{}/saved_preds".format(data), "{}_wiki_-5_no_overlaps.jsonl".format(split)), 'w') as wf:
+with open(os.path.join("/checkpoint/belindali/entity_link/data/{}/saved_preds".format(data), "{}_{}.jsonl".format(split, str(threshold))), 'w') as wf:
     for new_ex in new_examples:
         b=wf.write(json.dumps(new_ex) + "\n")
 
