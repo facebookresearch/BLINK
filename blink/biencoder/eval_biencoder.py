@@ -39,7 +39,7 @@ def load_entity_dict(logger, params, is_zeshel):
             title = sample['title']
             text = sample.get("text", "").strip()
             entity_list.append((title, text))
-            if params["degug"] and len(entity_list) > 200:
+            if params["debug"] and len(entity_list) > 200:
                 break
 
     return entity_list
@@ -118,41 +118,32 @@ def get_candidate_pool_tensor(
     return cand_pool
 
 
-def encode_candidate_zeshel(
-    reranker,
-    candidate_pool,
-    encode_batch_size,
-    silent,
-    logger,
-):
-    reranker.model.eval()
-    src = 0
-    cand_encode_list = {}
-    for src, cand_pool in candidate_pool.items():
-        logger.info("Encoding candidate pool %s" % WORLDS[src])
-        cand_pool_encode = encode_candidate(
-            reranker,
-            cand_pool,
-            encode_batch_size,
-            silent,
-            logger,
-        )
-        cand_encode_list[src] = cand_pool_encode
-    
-    return cand_encode_list
-
-
 def encode_candidate(
     reranker,
     candidate_pool,
     encode_batch_size,
     silent,
     logger,
+    is_zeshel,
 ):
+    if zeshel:
+        src = 0
+        cand_encode_dict = {}
+        for src, cand_pool in candidate_pool.items():
+            logger.info("Encoding candidate pool %s" % WORLDS[src])
+            cand_pool_encode = encode_candidate(
+                reranker,
+                cand_pool,
+                encode_batch_size,
+                silent,
+                logger,
+                is_zeshel = False,
+            )
+            cand_encode_dict[src] = cand_pool_encode
+        return cand_encode_dict
+        
     reranker.model.eval()
     device = reranker.device
-    #for cand_pool in candidate_pool:
-    #logger.info("Encoding candidate pool %s" % src)
     sampler = SequentialSampler(candidate_pool)
     data_loader = DataLoader(
         candidate_pool, sampler=sampler, batch_size=encode_batch_size
@@ -246,12 +237,15 @@ def main(params):
             logger.info("Loading failed. Generating candidate encoding.")
 
     if candidate_encoding is None:
-        candidate_encoding = encode_candidate_zeshel(
+        candidate_encoding = encode_candidate(
+            params,
             reranker,
             candidate_pool,
             params["encode_batch_size"],
             silent=params["silent"],
             logger=logger,
+            is_zeshel = params.get("zeshel", None)
+            
         )
 
         if cand_encode_path is not None:
