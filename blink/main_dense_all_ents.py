@@ -511,6 +511,7 @@ def get_predictions(
             # prune mention overlaps
             e_mention_bounds_pruned = []
             all_pred_entities_pruned = []
+            chosen_distances_pruned = []
             mention_masked_utterance = np.zeros(len(input_context))
             # ensure well-formed-ness, prune overlaps
             # greedily pick highest scoring, then prune all overlapping
@@ -525,6 +526,7 @@ def get_predictions(
                     pdb.set_trace()
                 e_mention_bounds_pruned.append(mb)
                 all_pred_entities_pruned.append(all_pred_entities[idx])
+                chosen_distances_pruned.append(float(chosen_distances[idx]))
                 mention_masked_utterance[mb[0]:mb[1]] = 1
 
             input_context = input_context[1:-1]  # remove BOS and sep
@@ -538,7 +540,7 @@ def get_predictions(
             entity_results = {
                 "id": sample["id"],
                 "text": sample["text"],
-                "scores": chosen_distances.tolist(),
+                "scores": chosen_distances_pruned,
             }
 
             if 'label_id' in sample:
@@ -630,14 +632,18 @@ def get_predictions(
 
 
 def _retrieve_from_saved_biencoder_outs(save_preds_dir):
-    nns = np.load(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), allow_pickle=True)
-    # dists = np.load(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), allow_pickle=True)
-    pred_mention_bounds = np.load(os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy"), allow_pickle=True)
-    cand_scores = np.load(os.path.join(args.save_preds_dir, "biencoder_cand_scores.npy"), allow_pickle=True)
-    mention_scores = np.load(os.path.join(args.save_preds_dir, "biencoder_mention_scores.npy"), allow_pickle=True)
+    nns = np.load(os.path.join(save_preds_dir, "biencoder_nns.npy"), allow_pickle=True)
+    # dists = np.load(os.path.join(save_preds_dir, "biencoder_dists.npy"), allow_pickle=True)
+    pred_mention_bounds = np.load(os.path.join(save_preds_dir, "biencoder_mention_bounds.npy"), allow_pickle=True)
+    cand_scores = np.load(os.path.join(save_preds_dir, "biencoder_cand_scores.npy"), allow_pickle=True)
+    mention_scores = np.load(os.path.join(save_preds_dir, "biencoder_mention_scores.npy"), allow_pickle=True)
 
     # TODO delete
-    dists = 
+    dists = []
+    for idx in range(len(cand_scores)):
+        score = torch.log_softmax(torch.tensor(cand_scores[idx]), 1) + torch.sigmoid(torch.tensor(mention_scores[idx])).log().unsqueeze(-1)
+        dists.append(score.numpy())  # GRAPHQUESTIONS BEST
+    np.save(os.path.join(save_preds_dir, "biencoder_dists.npy"), dists)
     return nns, dists, pred_mention_bounds, cand_scores, mention_scores
 
 
@@ -727,6 +733,7 @@ def run(
     print(args.output_path)
 
     stopping_condition = False
+    threshold = -2.9
     if args.interactive:
         while not stopping_condition:
 
@@ -751,20 +758,32 @@ def run(
                 # cand_encs_flat_index=cand_encs_flat_index
             )
 
-            (
-                all_entity_preds, num_correct, num_predicted, num_gold,
-                num_correct_from_input_window, num_gold_from_input_window,
-            ) = get_predictions(
-                args, dataloader, biencoder_params,
-                samples, nns, dists, mention_scores, cand_scores,
-                pred_mention_bounds, id2title
-            )
-
-            print(samples[0]['text'])
-            print("\n".join([
-                entity[1] + "\n    Title: " + entity[0] + "\n    Score: " + str(all_entity_preds[0]['scores'][idx]) + "\n    Tuple: " + str(all_entity_preds[0]['pred_triples'][idx])
-                for idx, entity in enumerate(all_entity_preds[0]['pred_tuples_string'])
-            ]))
+            action = "c"
+            while action == "c":
+                (
+                    all_entity_preds, num_correct, num_predicted, num_gold,
+                    num_correct_from_input_window, num_gold_from_input_window,
+                ) = get_predictions(
+                    args, dataloader, biencoder_params,
+                    samples, nns, dists, mention_scores, cand_scores,
+                    pred_mention_bounds, id2title, threshold=threshold,
+                )
+                print(samples[0]['text'])
+                print("\n".join([
+                    entity[1] + "\n    Title: " + entity[0] + "\n    Score: " + str(all_entity_preds[0]['scores'][idx]) + "\n    Tuple: " + str(all_entity_preds[0]['pred_triples'][idx])
+                    for idx, entity in enumerate(all_entity_preds[0]['pred_tuples_string'])
+                ]))
+                action = input("Next question [n] / change threshold [c]: ")
+                while action != "n" and action != "c":
+                    action = input("Next question [n] / change threshold [c]: ")
+                if action == "c":
+                    print("Current threshold {}".format(threshold))
+                    while True:
+                        try:
+                            threshold = float(input("New threshold (increase for less cands, decrease for more cands): "))
+                            break
+                        except:
+                            print("Error expected float, got {}".format(threshold))
     
     else:
         samples = None

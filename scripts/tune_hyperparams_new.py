@@ -59,6 +59,7 @@ for data in ["WebQuestions", "triviaqa", "nq"]:
         num_correct=0
         num_predicted=0
         num_gold=0
+        threshold = -2.7
         for i, example in enumerate(tqdm(examples)):
             # select valid candidates
             valid_cands_mask = (biencoder_dists[i][:,0] != -1) & (biencoder_dists[i][:,0] == biencoder_dists[i][:,0])
@@ -175,18 +176,31 @@ def filter_overlaps(tokens, pred_triples, pred_scores):
     all_pred_entities_pruned = []
     all_pred_scores_pruned = []
     mention_masked_utterance = np.zeros(len(tokens))
+    # mention_masked_utterance = np.zeros(len(tokens))
     # ensure well-formed-ness, prune overlaps
     # greedily pick highest scoring, then prune all overlapping
     for idx, mb in enumerate(pred_triples):
-        try:
-            if sum(mention_masked_utterance[mb[1]:mb[2]]) > 0:
-                continue
-        except:
-            import pdb
-            pdb.set_trace()
+        if sum(mention_masked_utterance[mb[1]:mb[2]]) > 0:
+            continue
         all_pred_entities_pruned.append(mb)
         all_pred_scores_pruned.append(pred_scores[idx])
         mention_masked_utterance[mb[1]:mb[2]] = 1
+    return all_pred_entities_pruned, all_pred_scores_pruned
+
+
+def filter_repeat_overlaps(tokens, pred_triples, pred_scores):
+    all_pred_entities_pruned = []
+    all_pred_scores_pruned = []
+    mention_masked_utterance = {triple[0]: np.zeros(len(tokens)) for triple in pred_triples}
+    # mention_masked_utterance = np.zeros(len(tokens))
+    # ensure well-formed-ness, prune overlaps
+    # greedily pick highest scoring, then prune all overlapping
+    for idx, mb in enumerate(pred_triples):
+        if sum(mention_masked_utterance[mb[0]][mb[1]:mb[2]]) > 0:
+            continue
+        all_pred_entities_pruned.append(mb)
+        all_pred_scores_pruned.append(pred_scores[idx])
+        mention_masked_utterance[mb[0]][mb[1]:mb[2]] = 1
     return all_pred_entities_pruned, all_pred_scores_pruned
 
 
