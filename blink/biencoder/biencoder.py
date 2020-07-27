@@ -241,7 +241,10 @@ class GetContextEmbedsHead(nn.Module):
 
     def forward(self, bert_output, mention_idxs):
         '''
+        bert_output
+            (bs, seqlen, embed_dim)
         mention_idxs: both bounds are inclusive [start, end]
+            (bs, num_spans, 2)
         '''
         # "'all_avg' to average across tokens in mention, 'fl_avg' to average across first/last tokens in mention, "
         # "'{all/fl}_linear' for linear layer over mention, '{all/fl}_mlp' to MLP over mention)",

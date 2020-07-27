@@ -135,6 +135,28 @@ def _get_test_samples(
 
 
 def _process_biencoder_dataloader(samples, tokenizer, biencoder_params, logger):
+    """
+    Samples: list of examples, each of the form--
+
+    IF HAVE LABELS
+    {
+        "id": "WebQTest-12",
+        "text": "who is governor of ohio 2011?",
+        "mentions": [[19, 23], [7, 15]],
+        "tokenized_text_ids": [2040, 2003, 3099, 1997, 4058, 2249, 1029],
+        "tokenized_mention_idxs": [[4, 5], [2, 3]],
+        "label_id": [10902, 28422],
+        "wikidata_id": ["Q1397", "Q132050"],
+        "entity": ["Ohio", "Governor"],
+        "label": [list of wikipedia descriptions]
+    }
+
+    IF NO LABELS (JUST PREDICTION)
+    {
+        "id": "WebQTest-12",
+        "text": "who is governor of ohio 2011?",
+    }
+    """
     if 'label_id' in samples[0]:
         # have labels
         tokens_data, tensor_data_tuple, _ = process_mention_data(
@@ -368,7 +390,7 @@ def _run_biencoder(
                 # scores = torch.log_softmax(cand_scores, 1) + torch.sigmoid(mention_scores)
                 # Is NAN for impossible mentions...
                 # DIM (bs, max_num_pred_mentions, 10)
-                scores += torch.sigmoid(chosen_mention_logits.unsqueeze(-1))
+                scores += torch.sigmoid(chosen_mention_logits.unsqueeze(-1)).log()
             # mention_scores = mention_scores.expand_as(cand_scores)
 
             '''
@@ -396,7 +418,11 @@ def _run_biencoder(
     return nns, dists, pred_mention_bounds, mention_scores, cand_scores  #, new_samples, new_sample_to_all_context_inputs
 
 
-def get_predictions(args, dataloader, biencoder_params, samples, nns, dists, pred_mention_bounds):
+def get_predictions(
+    args, dataloader, biencoder_params, samples, nns,
+    dists, mention_scores, cand_scores,
+    pred_mention_bounds, id2title, threshold=-2.9,
+):
     """
     Arguments:
         args, dataloader, biencoder_params, samples, nns, dists, pred_mention_bounds
@@ -405,9 +431,6 @@ def get_predictions(args, dataloader, biencoder_params, samples, nns, dists, pre
         num_correct, num_predicted, num_gold,
         num_correct_from_input_window, num_gold_from_input_window
     """
-    logger.info("Loading id2title")
-    id2title = json.load(open("models/id2title.json"))
-    logger.info("Finish loading id2title")
 
     # save biencoder predictions and print precision/recalls
     num_correct = 0
@@ -415,193 +438,207 @@ def get_predictions(args, dataloader, biencoder_params, samples, nns, dists, pre
     num_gold = 0
     num_correct_from_input_window = 0
     num_gold_from_input_window = 0
-    save_biencoder_file = os.path.join(args.save_preds_dir, 'biencoder_outs.jsonl')
     all_entity_preds = []
-    errors_f = open(os.path.join(args.save_preds_dir, 'biencoder_errors.jsonl'), 'w')
-    # check out no_pred_indices
-    with open(save_biencoder_file, 'w') as f:
 
-        # nns (List[Array[int]]) [(num_pred_mentions, cands_per_mention) x exs])
-        # dists (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
-        # pred_mention_bounds (List[Array[int]]) [(num_pred_mentions, 2) x exs]
-        # cand_scores (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
-        # mention_scores (List[Array[float]]) [(num_pred_mentions,) x exs])
-        for batch_num, batch_data in enumerate(dataloader):
-            batch_context = batch_data[0]
-            if len(batch_data) > 1:
-                _, batch_cands, batch_label_ids, batch_mention_idxs, batch_mention_idx_masks = batch_data
-            for b in range(len(batch_context)):
-                i = batch_num * biencoder_params['eval_batch_size'] + b
-                sample = samples[i]
-                input_context = batch_context[b][batch_context[b] != 0].tolist()  # filter out padding
+    f = errors_f = None
+    if getattr(args, 'save_preds_dir', None) is not None:
+        save_biencoder_file = os.path.join(args.save_preds_dir, 'biencoder_outs.jsonl')
+        f = open(save_biencoder_file, 'w')
+        errors_f = open(os.path.join(args.save_preds_dir, 'biencoder_errors.jsonl'), 'w')
 
-                # (num_pred_mentions, cands_per_mention)
-                cands_mask = (dists[i][:,0] != -1) & (dists[i][:,0] == dists[i][:,0])
-                pred_entity_list = nns[i][cands_mask]
-                if len(pred_entity_list) > 0:
-                    e_id = pred_entity_list[0]
-                distances = dists[i][cands_mask]
-                # (num_pred_mentions, 2)
-                entity_mention_bounds_idx = pred_mention_bounds[i][cands_mask]
-                utterance = sample['text']
+    # nns (List[Array[int]]) [(num_pred_mentions, cands_per_mention) x exs])
+    # dists (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
+    # pred_mention_bounds (List[Array[int]]) [(num_pred_mentions, 2) x exs]
+    # cand_scores (List[Array[float]]) [(num_pred_mentions, cands_per_mention) x exs])
+    # mention_scores (List[Array[float]]) [(num_pred_mentions,) x exs])
+    for batch_num, batch_data in enumerate(dataloader):
+        batch_context = batch_data[0]
+        if len(batch_data) > 1:
+            _, batch_cands, batch_label_ids, batch_mention_idxs, batch_mention_idx_masks = batch_data
+        for b in range(len(batch_context)):
+            i = batch_num * biencoder_params['eval_batch_size'] + b
+            sample = samples[i]
+            input_context = batch_context[b][batch_context[b] != 0].tolist()  # filter out padding
 
-                '''
-                get top for each mention bound, w/out duplicates
-                # TOP-1
-                all_pred_entities = pred_entity_list[:,:1]
-                e_mention_bounds = entity_mention_bounds_idx[:1].tolist()
-                # '''
-                if args.final_thresholding == "joint_0":
-                    # THRESHOLDING
-                    assert utterance is not None
-                    top_mentions = (distances[:,0] > -2).nonzero()[0]
-                    # cands already sorted by score
-                    all_pred_entities = [pred_entity_list[ment_idx, 0] for ment_idx in top_mentions]
-                    e_mention_bounds = [entity_mention_bounds_idx[ment_idx] for ment_idx in top_mentions]
-                elif args.final_thresholding == "top_joint_by_mention" or args.final_thresholding == "top_entity_by_mention":
-                    if len(entity_mention_bounds_idx[i]) == 0:
-                        e_mention_bounds_idxs = []
-                    else:
-                        # 1 PER BOUND
-                        try:
-                            e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx == j)[0][0] for j in range(len(sample['context_left']))]
-                        except:
-                            import pdb
-                            pdb.set_trace()
-                    # sort bounds
-                    e_mention_bounds_idxs.sort()
-                    all_pred_entities = []
-                    e_mention_bounds = []
-                    for bound_idx in e_mention_bounds_idxs:
-                        if pred_entity_list[bound_idx] not in all_pred_entities:
-                            all_pred_entities.append(pred_entity_list[bound_idx])
-                            e_mention_bounds.append(entity_mention_bounds_idx[bound_idx])
+            # (num_pred_mentions, cands_per_mention)
+            cands_mask = (dists[i][:,0] != -1) & (dists[i][:,0] == dists[i][:,0])
+            pred_entity_list = nns[i][cands_mask]
+            if len(pred_entity_list) > 0:
+                e_id = pred_entity_list[0]
+            distances = dists[i][cands_mask]
+            # (num_pred_mentions, 2)
+            entity_mention_bounds_idx = pred_mention_bounds[i][cands_mask]
+            utterance = sample['text']
 
-                # prune mention overlaps
-                e_mention_bounds_pruned = []
-                all_pred_entities_pruned = []
-                mention_masked_utterance = np.zeros(len(input_context))
-                # ensure well-formed-ness, prune overlaps
-                # greedily pick highest scoring, then prune all overlapping
-                for idx, mb in enumerate(e_mention_bounds):
-                    mb[1] += 1  # prediction was inclusive, now make exclusive
-                    # check if in existing mentions
+            '''
+            get top for each mention bound, w/out duplicates
+            # TOP-1
+            all_pred_entities = pred_entity_list[:,:1]
+            e_mention_bounds = entity_mention_bounds_idx[:1].tolist()
+            # '''
+            if args.final_thresholding == "joint_0":
+                # THRESHOLDING
+                assert utterance is not None
+                top_mentions_mask = (distances[:,0] > threshold)
+                _, sort_idxs = torch.tensor(distances[:,0][top_mentions_mask]).sort(descending=True)
+                # cands already sorted by score
+                all_pred_entities = pred_entity_list[:,0][top_mentions_mask]
+                e_mention_bounds = entity_mention_bounds_idx[top_mentions_mask]
+                chosen_distances = distances[:,0][top_mentions_mask]
+                if len(all_pred_entities) >= 2:
+                    all_pred_entities = all_pred_entities[sort_idxs]
+                    e_mention_bounds = e_mention_bounds[sort_idxs]
+                    chosen_distances = chosen_distances[sort_idxs]
+            elif args.final_thresholding == "top_joint_by_mention" or args.final_thresholding == "top_entity_by_mention":
+                if len(entity_mention_bounds_idx[i]) == 0:
+                    e_mention_bounds_idxs = []
+                else:
+                    # 1 PER BOUND
                     try:
-                        if mention_masked_utterance[mb[0]:mb[1]].sum() >= 1:
-                            continue
+                        e_mention_bounds_idxs = [np.where(entity_mention_bounds_idx == j)[0][0] for j in range(len(sample['context_left']))]
                     except:
                         import pdb
                         pdb.set_trace()
-                    e_mention_bounds_pruned.append(mb)
-                    all_pred_entities_pruned.append(all_pred_entities[idx])
-                    mention_masked_utterance[mb[0]:mb[1]] = 1
+                # sort bounds
+                e_mention_bounds_idxs.sort()
+                all_pred_entities = []
+                e_mention_bounds = []
+                for bound_idx in e_mention_bounds_idxs:
+                    if pred_entity_list[bound_idx] not in all_pred_entities:
+                        all_pred_entities.append(pred_entity_list[bound_idx])
+                        e_mention_bounds.append(entity_mention_bounds_idx[bound_idx])
 
-                input_context = input_context[1:-1]  # remove BOS and sep
+            # prune mention overlaps
+            e_mention_bounds_pruned = []
+            all_pred_entities_pruned = []
+            mention_masked_utterance = np.zeros(len(input_context))
+            # ensure well-formed-ness, prune overlaps
+            # greedily pick highest scoring, then prune all overlapping
+            for idx, mb in enumerate(e_mention_bounds):
+                mb[1] += 1  # prediction was inclusive, now make exclusive
+                # check if in existing mentions
+                try:
+                    if mention_masked_utterance[mb[0]:mb[1]].sum() >= 1:
+                        continue
+                except:
+                    import pdb
+                    pdb.set_trace()
+                e_mention_bounds_pruned.append(mb)
+                all_pred_entities_pruned.append(all_pred_entities[idx])
+                mention_masked_utterance[mb[0]:mb[1]] = 1
+
+            input_context = input_context[1:-1]  # remove BOS and sep
+            pred_triples = [(
+                # sample['all_gold_entities'][i],
+                str(all_pred_entities_pruned[j]),
+                int(e_mention_bounds_pruned[j][0]) - 1,  # -1 for BOS
+                int(e_mention_bounds_pruned[j][1]) - 1,
+            ) for j in range(len(all_pred_entities_pruned))]
+
+            entity_results = {
+                "id": sample["id"],
+                "text": sample["text"],
+                "scores": chosen_distances.tolist(),
+            }
+
+            if 'label_id' in sample:
+                # Get LABELS
+                input_mention_idxs = batch_mention_idxs[b][batch_mention_idx_masks[b]].tolist()
+                input_label_ids = batch_label_ids[b][batch_label_ids[b] != -1].tolist()
+                assert len(input_label_ids) == len(input_mention_idxs)
+                gold_mention_bounds = [
+                    sample['text'][ment[0]-10:ment[0]] + "[" + sample['text'][ment[0]:ment[1]] + "]" + sample['text'][ment[1]:ment[1]+10]
+                    for ment in sample['mentions']
+                ]
+
+                # GET ALIGNED MENTION_IDXS (input is slightly different to model) between ours and gold labels -- also have to account for BOS
+                gold_input = sample['tokenized_text_ids']
+                # return first instance of my_input in gold_input
+                for my_input_start in range(len(gold_input)):
+                    if (
+                        gold_input[my_input_start] == input_context[0] and
+                        gold_input[my_input_start:my_input_start+len(input_context)] == input_context
+                    ):
+                        break
+
+                # add alignment factor (my_input_start) to predicted mention triples
                 pred_triples = [(
+                    triple[0], triple[1] + my_input_start, triple[2] + my_input_start,
+                ) for triple in pred_triples]
+                gold_triples = [(
+                    str(sample['label_id'][j]),
+                    sample['tokenized_mention_idxs'][j][0], sample['tokenized_mention_idxs'][j][1],
+                ) for j in range(len(sample['label_id']))]
+                num_overlap = entity_linking_tp_with_overlap(gold_triples, pred_triples)
+                num_correct += num_overlap
+                num_predicted += len(all_pred_entities_pruned)
+                num_gold += len(sample["label_id"])
+
+                # compute number correct given the input window
+                pred_input_window_triples = [(
                     # sample['all_gold_entities'][i],
                     str(all_pred_entities_pruned[j]),
-                    int(e_mention_bounds_pruned[j][0]) - 1,  # -1 for BOS
-                    int(e_mention_bounds_pruned[j][1]) - 1,
+                    int(e_mention_bounds_pruned[j][0]), int(e_mention_bounds_pruned[j][1]),
                 ) for j in range(len(all_pred_entities_pruned))]
+                gold_input_window_triples = [(
+                    str(input_label_ids[j]),
+                    input_mention_idxs[j][0], input_mention_idxs[j][1] + 1,
+                ) for j in range(len(input_label_ids))]
+                num_correct_from_input_window += entity_linking_tp_with_overlap(gold_input_window_triples, pred_input_window_triples)
+                num_gold_from_input_window += len(input_mention_idxs)
 
-                entity_results = {
-                    "id": sample["id"],
-                    "text": sample["text"],
-                    "scores": distances.tolist(),
-                }
+                for triple in pred_triples:
+                    if triple[0] not in id2title:
+                        import pdb
+                        pdb.set_trace()
+                entity_results.update({
+                    "pred_tuples_string": [
+                        [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
+                        for triple in pred_triples
+                    ],
+                    "gold_tuples_string": [
+                        [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
+                        for triple in gold_triples
+                    ],
+                    "pred_triples": pred_triples,
+                    "gold_triples": gold_triples,
+                    "tokens": input_context,
+                })
 
-                if 'label_id' in sample:
-                    # Get LABELS
-                    input_mention_idxs = batch_mention_idxs[b][batch_mention_idx_masks[b]].tolist()
-                    input_label_ids = batch_label_ids[b][batch_label_ids[b] != -1].tolist()
-                    assert len(input_label_ids) == len(input_mention_idxs)
-                    gold_mention_bounds = [
-                        sample['text'][ment[0]-10:ment[0]] + "[" + sample['text'][ment[0]:ment[1]] + "]" + sample['text'][ment[1]:ment[1]+10]
-                        for ment in sample['mentions']
-                    ]
+                if errors_f is not None and (num_overlap != len(gold_triples) or num_overlap != len(pred_triples)):
+                    errors_f.write(json.dumps(entity_results) + "\n")
+            else:
+                entity_results.update({
+                    "pred_tuples_string": [
+                        [id2title[triple[0]], tokenizer.decode(input_context[triple[1]:triple[2]])]
+                        for triple in pred_triples
+                    ],
+                    "pred_triples": pred_triples,
+                    "tokens": input_context,
+                })
 
-                    # GET ALIGNED MENTION_IDXS (input is slightly different to model) between ours and gold labels -- also have to account for BOS
-                    gold_input = sample['tokenized_text_ids']
-                    # return first instance of my_input in gold_input
-                    for my_input_start in range(len(gold_input)):
-                        if (
-                            gold_input[my_input_start] == input_context[0] and
-                            gold_input[my_input_start:my_input_start+len(input_context)] == input_context
-                        ):
-                            break
-
-                    # add alignment factor (my_input_start) to predicted mention triples
-                    pred_triples = [(
-                        triple[0], triple[1] + my_input_start, triple[2] + my_input_start,
-                    ) for triple in pred_triples]
-                    gold_triples = [(
-                        str(sample['label_id'][j]),
-                        sample['tokenized_mention_idxs'][j][0], sample['tokenized_mention_idxs'][j][1],
-                    ) for j in range(len(sample['label_id']))]
-                    num_overlap = entity_linking_tp_with_overlap(gold_triples, pred_triples)
-                    num_correct += num_overlap
-                    num_predicted += len(all_pred_entities_pruned)
-                    num_gold += len(sample["label_id"])
-
-                    # compute number correct given the input window
-                    pred_input_window_triples = [(
-                        # sample['all_gold_entities'][i],
-                        str(all_pred_entities_pruned[j]),
-                        int(e_mention_bounds_pruned[j][0]), int(e_mention_bounds_pruned[j][1]),
-                    ) for j in range(len(all_pred_entities_pruned))]
-                    gold_input_window_triples = [(
-                        str(input_label_ids[j]),
-                        input_mention_idxs[j][0], input_mention_idxs[j][1] + 1,
-                    ) for j in range(len(input_label_ids))]
-                    num_correct_from_input_window += entity_linking_tp_with_overlap(gold_input_window_triples, pred_input_window_triples)
-                    num_gold_from_input_window += len(input_mention_idxs)
-
-                    entity_results.update({
-                        "pred_tuples_string": [
-                            [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
-                            for triple in pred_triples
-                        ],
-                        "gold_tuples_string": [
-                            [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
-                            for triple in gold_triples
-                        ],
-                        "pred_triples": pred_triples,
-                        "gold_triples": gold_triples,
-                        "tokens": sample['tokenized_text_ids'],
-                    })
-
-                    if num_overlap != len(gold_triples) or num_overlap != len(pred_triples):
-                        errors_f.write(json.dumps(entity_results) + "\n")
-                else:
-                    for triple in pred_triples:
-                        try:
-                            id2title[triple[0]]
-                        except:
-                            import pdb
-                            pdb.set_trace()
-                    entity_results.update({
-                        "pred_tuples_string": [
-                            [id2title[triple[0]], tokenizer.decode(input_context[triple[1]:triple[2]])]
-                            for triple in pred_triples
-                        ],
-                        "pred_triples": pred_triples,
-                        "tokens": input_context,
-                    })
-
-                all_entity_preds.append(entity_results)
+            all_entity_preds.append(entity_results)
+            if f is not None:
                 f.write(
                     json.dumps(entity_results) + "\n"
                 )
     
-    errors_f.close()
+    if f is not None:
+        f.close()
+        errors_f.close()
     return all_entity_preds, num_correct, num_predicted, num_gold, num_correct_from_input_window, num_gold_from_input_window
 
 
 def _retrieve_from_saved_biencoder_outs(save_preds_dir):
     nns = np.load(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), allow_pickle=True)
-    dists = np.load(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), allow_pickle=True)
+    # dists = np.load(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), allow_pickle=True)
     pred_mention_bounds = np.load(os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy"), allow_pickle=True)
-    return nns, dists, pred_mention_bounds
+    cand_scores = np.load(os.path.join(args.save_preds_dir, "biencoder_cand_scores.npy"), allow_pickle=True)
+    mention_scores = np.load(os.path.join(args.save_preds_dir, "biencoder_mention_scores.npy"), allow_pickle=True)
+
+    # TODO delete
+    dists = 
+    return nns, dists, pred_mention_bounds, cand_scores, mention_scores
 
 
 def load_models(args, logger):
@@ -670,6 +707,9 @@ def run(
     candidate_encoding,
     candidate_token_ids,
 ):
+    logger.info("Loading id2title")
+    id2title = json.load(open("models/id2title.json"))
+    logger.info("Finish loading id2title")
 
     if not args.test_mentions and not args.interactive and not args.qa_data:
         msg = (
@@ -679,7 +719,7 @@ def run(
         )
         raise ValueError(msg)
     
-    if hasattr(args, 'save_preds_dir') and not os.path.exists(args.save_preds_dir):
+    if getattr(args, 'save_preds_dir', None) is not None and not os.path.exists(args.save_preds_dir):
         os.makedirs(args.save_preds_dir)
         print("Saving preds in {}".format(args.save_preds_dir))
 
@@ -693,12 +733,38 @@ def run(
             logger.info("interactive mode")
 
             # Interactive
-            text = input("insert text:")
+            text = input("insert text: ")
 
-            # Identify mentions
-            samples = _annotate(ner_model, [text])
+            # Prepare data
+            samples = [{"id": "-1", "text": text}]
+            dataloader = _process_biencoder_dataloader(
+                samples, biencoder.tokenizer, biencoder_params, logger,
+            )
 
-            _print_colorful_text(text, samples)
+            # Run inference
+            nns, dists, pred_mention_bounds, mention_scores, cand_scores = _run_biencoder(
+                args, biencoder, dataloader, candidate_encoding, samples=samples,
+                top_k=args.top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
+                jointly_extract_mentions=("joint" in args.do_ner),
+                # num_mentions=int(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
+                mention_classifier_threshold=float(args.mention_classifier_threshold) if "joint" in args.do_ner else None,
+                # cand_encs_flat_index=cand_encs_flat_index
+            )
+
+            (
+                all_entity_preds, num_correct, num_predicted, num_gold,
+                num_correct_from_input_window, num_gold_from_input_window,
+            ) = get_predictions(
+                args, dataloader, biencoder_params,
+                samples, nns, dists, mention_scores, cand_scores,
+                pred_mention_bounds, id2title
+            )
+
+            print(samples[0]['text'])
+            print("\n".join([
+                entity[1] + "\n    Title: " + entity[0] + "\n    Score: " + str(all_entity_preds[0]['scores'][idx]) + "\n    Tuple: " + str(all_entity_preds[0]['pred_triples'][idx])
+                for idx, entity in enumerate(all_entity_preds[0]['pred_tuples_string'])
+            ]))
     
     else:
         samples = None
@@ -747,17 +813,18 @@ def run(
             with open(os.path.join(args.save_preds_dir, "runtime.txt"), "w") as wf:
                 wf.write(str(runtime))
         else:
-            nns, dists, pred_mention_bounds = _retrieve_from_saved_biencoder_outs(args.save_preds_dir)
+            nns, dists, pred_mention_bounds, cand_scores, mention_scores = _retrieve_from_saved_biencoder_outs(args.save_preds_dir)
             runtime = float(open(os.path.join(args.save_preds_dir, "runtime.txt")).read())
 
-        assert len(samples) == len(nns) == len(dists) == len(pred_mention_bounds)
+        assert len(samples) == len(nns) == len(dists) == len(pred_mention_bounds) == len(cand_scores) == len(mention_scores)
 
         (
             all_entity_preds, num_correct, num_predicted, num_gold,
             num_correct_from_input_window, num_gold_from_input_window,
         ) = get_predictions(
             args, dataloader, biencoder_params,
-            samples, nns, dists, pred_mention_bounds,
+            samples, nns, dists, mention_scores, cand_scores,
+            pred_mention_bounds, id2title
         )
         
         print()
@@ -830,7 +897,7 @@ if __name__ == "__main__":
         "Threshold for mention classifier score (either qa or joint) for which examples will be pruned if they fall under that threshold."
     )
     parser.add_argument(
-        "--top_k", type=int, default=100, help="Must be specified if '--do_ner qa_classifier'."
+        "--top_k", type=int, default=50, help="Must be specified if '--do_ner qa_classifier'."
         "Number of entity candidates to consider per mention"
     )
     parser.add_argument(
