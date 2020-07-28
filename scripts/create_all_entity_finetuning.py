@@ -8,6 +8,7 @@ import random
 from tqdm import tqdm
 import string
 import numpy as np
+import os
 
 from pytorch_transformers.tokenization_bert import BertTokenizer
 
@@ -128,9 +129,14 @@ def load_aida_examples():
             examples_new[split][ex_id]['label'] += wikipedia_desc  #-- wiki descriptions corresponding to label_id
 
     for split in examples_new:
-        with open("/checkpoint/belindali/entity_link/data/AIDA-YAGO2/{}.jsonl".format(split), "w") as wf:
-            for example in tqdm(examples_new[split]):
-                b=wf.write(json.dumps(examples_new[split][example]) + "\n")
+        fp = "/checkpoint/belindali/entity_link/data/AIDA-YAGO2/{}.jsonl".format(split)
+        user_input = ''
+        if os.path.exists(fp):
+            user_input = input("Overwrite {}? [y/n]: ".format(fp))
+        if user_input == 'y' or not os.path.exists(fp):
+            with open(fp, "w") as wf:
+                for example in tqdm(examples_new[split]):
+                    b=wf.write(json.dumps(examples_new[split][example]) + "\n")
     
     return examples_new
 
@@ -269,9 +275,14 @@ def load_webqsp_examples(filepath):
         print("{}: {}".format(split, len(examples_new[split])))
 
     for split in examples_new:
-        with open("/checkpoint/belindali/entity_link/data/WebQSP_EL/{}.jsonl".format(split), "w") as wf:
-            for example in tqdm(examples_new[split]):
-                b=wf.write(json.dumps(examples_new[split][example]) + "\n")
+        fp = "/checkpoint/belindali/entity_link/data/WebQSP_EL/{}.jsonl".format(split)
+        user_input = ''
+        if os.path.exists(fp):
+            user_input = input("Overwrite {}? [y/n]: ".format(fp))
+        if user_input == 'y' or not os.path.exists(fp):
+            with open(fp, "w") as wf:
+                for example in tqdm(examples_new[split]):
+                    b=wf.write(json.dumps(examples_new[split][example]) + "\n")
 
     return examples_new
 
@@ -297,18 +308,9 @@ def load_graphqs_examples(filepath):
         train_dev_examples = json.load(f)
         train_exs = []
         dev_exs = []
+        dev_ids = random.sample(range(len(train_dev_examples)), int(len(train_dev_examples) * 0.2))
         for i, example in enumerate(train_dev_examples):
-            if len(example['entities']) == 1 and len(example['entities_fb']) > 1:
-                print(i)
-                train_dev_examples[i]['entities_fb'] = [example['main_entity_fb']]
-            main_entity_idx = examples_new[split][ex_id]['main_entity_idx'] = example['entities'].index(example['main_entity'])
-            if example['entities_fb'][main_entity_idx] != example['main_entity_fb']:
-                print(i)
-                # do swap
-                main_entity_idx_pos = example['entities_fb'].index(example['main_entity_fb'])
-                train_dev_examples[i]['entities_fb'][main_entity_idx_pos] = example['entities_fb'][main_entity_idx]
-                train_dev_examples[i]['entities_fb'][main_entity_idx] = example['main_entity_fb']
-            if example['question_id'] in dev_ids_list:
+            if i in dev_ids:
                 dev_exs.append(example)
             else:
                 train_exs.append(example)
@@ -317,21 +319,9 @@ def load_graphqs_examples(filepath):
 
     # json.dump(train_dev_examples, open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/WebQSP_EL/webqsp.train.entities.json", "w"))
 
-    with open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/graphquestions_EL/graph.test.entities.with_classes.json") as f:
+    with open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/graphquestions_EL/graph.test.entities.json") as f:
         test_examples = json.load(f)
         all_examples["test"] = test_examples
-        for i, example in enumerate(test_examples):
-            if len(example['entities']) == 1 and len(example['entities_fb']) > 1:
-                test_examples[i]['entities_fb'] = [example['main_entity_fb']]
-            main_entity_idx = examples_new[split][ex_id]['main_entity_idx'] = example['entities'].index(example['main_entity'])
-            if example['entities_fb'][main_entity_idx] != example['main_entity_fb']:
-                print(i)
-                # do swap
-                main_entity_idx_pos = example['entities_fb'].index(example['main_entity_fb'])
-                test_examples[i]['entities_fb'][main_entity_idx_pos] = example['entities_fb'][main_entity_idx]
-                test_examples[i]['entities_fb'][main_entity_idx] = example['main_entity_fb']
-            if len(example['entities']) == 1 and len(example['entities_fb']) > 1:
-                print(example['question_id'])
 
     # json.dump(test_examples, open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/WebQSP_EL/webqsp.test.entities.with_classes.json", "w"))
 
@@ -339,7 +329,6 @@ def load_graphqs_examples(filepath):
         print("{}: {}".format(split, len(all_examples[split])))
 
     missing_labels = []
-    wrong_main_entities = []
     examples_new = {}
     for split in all_examples:
         examples_new[split] = {}
@@ -356,7 +345,6 @@ def load_graphqs_examples(filepath):
                     'entity': [],  #-- wiki title corresponding to label_id
                     'label': [],  #-- wiki descriptions corresponding to label_id
                     'entities_fb': [],
-                    'main_entity_idx': -1,
                 }
             all_ents = example["entities"]
             try:
@@ -377,45 +365,52 @@ def load_graphqs_examples(filepath):
             examples_new[split][ex_id]['entity'] += wikipedia_titles  #-- wiki title corresponding to label_id
             examples_new[split][ex_id]['label'] += wikipedia_desc  #-- wiki descriptions corresponding to label_id
             examples_new[split][ex_id]['entities_fb'] += example['entities_fb']
-            if 'entity_classes' in example:
-                examples_new[split][ex_id]['entity_classes'] = example['entity_classes']
-            examples_new[split][ex_id]['main_entity_idx'] = all_ents.index(example['main_entity'])
-            try:
-                # sanity check main_entity_idx
-                assert example['main_entity'] == all_ents[examples_new[split][ex_id]['main_entity_idx']]
-                assert example['main_entity_fb'] == example['entities_fb'][examples_new[split][ex_id]['main_entity_idx']]
-                # assert example['main_entity_text'] == wikipedia_titles[examples_new[split][ex_id]['main_entity_idx']]
-                assert example['main_entity_pos'] == example_ranges[examples_new[split][ex_id]['main_entity_idx']]
-                # sanity check positions
-                assert (
-                    example['main_entity_tokens'] == example["utterance"][example['main_entity_pos'][0]:example['main_entity_pos'][1]] or
-                    example['main_entity_text'].lower() == example["utterance"][example['main_entity_pos'][0]:example['main_entity_pos'][1]] or
-                    example['utterance'][example['main_entity_pos'][0]:example['main_entity_pos'][1]].replace(' ', '') == example['main_entity_tokens'].replace(' ', '')
-                )
-            except:
-                if example['main_entity_fb'] != example['entities_fb'][examples_new[split][ex_id]['main_entity_idx']]:
-                    wrong_main_entities.append(example)
-                else:
-                    print(example)
-                    print(example['utterance'][example['main_entity_pos'][0]:example['main_entity_pos'][1]])
-                    import pdb
-                    pdb.set_trace()
 
     for split in examples_new:
         print("{}: {}".format(split, len(examples_new[split])))
 
     for split in examples_new:
-        with open("/checkpoint/belindali/entity_link/data/WebQSP_EL/{}.jsonl".format(split), "w") as wf:
-            for example in tqdm(examples_new[split]):
-                b=wf.write(json.dumps(examples_new[split][example]) + "\n")
+        fp = "/checkpoint/belindali/entity_link/data/graphquestions_EL/{}.jsonl".format(split)
+        user_input = ''
+        if os.path.exists(fp):
+            user_input = input("Overwrite {}? [y/n]: ".format(fp))
+        if user_input == 'y' or not os.path.exists(fp):
+            with open(fp, "w") as wf:
+                for example in tqdm(examples_new[split]):
+                    b=wf.write(json.dumps(examples_new[split][example]) + "\n")
 
     return examples_new
 
-save_dir = "WebQSP_EL"
+# save_dir = "WebQSP_EL"
 if save_dir == "WebQSP_EL":
-    examples_new = load_webqsp_examples()
+    examples_new = {}
+    for split in ["train", "dev", "test"]:
+        examples_new[split] = {}
+        with open("/checkpoint/belindali/entity_link/data/WebQSP_EL/{}.jsonl".format(split)) as f:
+            for line in f:
+                json_line = json.loads(line)
+                examples_new[split][json_line['id']] = json_line
+    # examples_new = load_webqsp_examples()
+elif save_dir == "graphquestions_EL":
+    examples_new = load_graphqs_examples()
 elif save_dir == "AIDA-YAGO2":
     examples_new = load_aida_examples()
+
+
+for dataset in ["nq", "triviaqa", "WebQuestions"]:
+    for split in ['train', 'dev', 'test']:
+        fp = "/checkpoint/sewonmin/data/{}/{}.json".format(dataset, split)
+        parsed_fp = json.load(open(fp))
+        write_fp = "/checkpoint/belindali/entity_link/data/{}/tokenized/{}.jsonl".format(dataset, split)
+        user_input = ''
+        if os.path.exists(write_fp):
+            user_input = input("Overwrite {}? [y/n]: ".format(write_fp))
+        if user_input == 'y' or not os.path.exists(write_fp):
+            with open(write_fp, "w") as wf:
+                for i, ex in tqdm(enumerate(parsed_fp['data'])):
+                    new_ex = {"id": ex["id"], "text": ex["question"], "answers": ex["answers"]}
+                    b=wf.write(json.dumps(new_ex) + "\n")
+
 
 # create chunked data, as well as mappings from each chunk to all of its corresponding mentions
 examples_new_2 = {}
@@ -470,11 +465,15 @@ for split in examples_new:
         }
         examples_new_2[split].append(new_ex)
 
-
 for split in examples_new_2:
-    with open("/checkpoint/belindali/entity_link/data/{}/{}_chunked.jsonl".format(save_dir, split), "w") as wf:
-        for example in tqdm(examples_new_2[split]):
-            b=wf.write(json.dumps(example) + "\n")
+    fp = "/checkpoint/belindali/entity_link/data/{}/{}_chunked.jsonl".format(save_dir, split)
+    user_input = ''
+    if os.path.exists(fp):
+        user_input = input("Overwrite {}? [y/n]: ".format(fp))
+    if user_input == 'y' or not os.path.exists(fp):
+        with open(fp, "w") as wf:
+            for example in tqdm(examples_new_2[split]):
+                b=wf.write(json.dumps(example) + "\n")
 
 examples_new = examples_new_2
 
@@ -539,9 +538,12 @@ for split in examples_new:
                 for char in target_mention:
                     if char in string.ascii_letters:
                         only_letter_target_mention += char
-                assert only_letter_tokenized_mention == only_letter_target_mention
-                import pdb
-                pdb.set_trace()
+                print("{} {}".format(tokenized_mention, target_mention))
+                try:
+                    assert only_letter_tokenized_mention == only_letter_target_mention
+                except:
+                    import pdb
+                    pdb.set_trace()
         new_ex = {
             'id': example['id'],
             'text': example['text'],
@@ -555,11 +557,15 @@ for split in examples_new:
         }
         examples_new_2[split].append(new_ex)
 
-
 num_long = []
 for split in examples_new_2:
-    with open("/checkpoint/belindali/entity_link/data/{}/tokenized/{}.jsonl".format(save_dir, split), "w") as wf:
-        for i, example in tqdm(enumerate(examples_new_2[split])):
-            if len(example['tokenized_text_ids']) > 512:
-                num_long.append(i)
-            b=wf.write(json.dumps(example) + "\n")
+    fp = "/checkpoint/belindali/entity_link/data/{}/tokenized/{}.jsonl".format(save_dir, split)
+    user_input = ''
+    if os.path.exists(fp):
+        user_input = input("Overwrite {}? [y/n]: ".format(fp))
+    if user_input == 'y' or not os.path.exists(fp):
+        with open(fp, "w") as wf:
+            for i, example in tqdm(enumerate(examples_new_2[split])):
+                if len(example['tokenized_text_ids']) > 512:
+                    num_long.append(i)
+                b=wf.write(json.dumps(example) + "\n")

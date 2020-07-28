@@ -51,34 +51,45 @@ HIGHLIGHTS = [
 from transformers import BertTokenizer
 tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 
-def _print_colorful_text(input_sentence, samples):
+def _print_colorful_text(input_tokens, tokenizer, pred_triples):
+    """
+    pred_triples:
+        Assumes no overlapping triples
+    """
+    sort_idxs = sorted(range(len(pred_triples)), key=lambda idx: pred_triples[idx][1])
+
     init()  # colorful output
     msg = ""
-    if samples and (len(samples) > 0):
-        msg += input_sentence[0 : int(samples[0]["start_pos"])]
-        for idx, sample in enumerate(samples):
-            msg += colored(
-                input_sentence[int(sample["start_pos"]) : int(sample["end_pos"])],
+    if pred_triples and (len(pred_triples) > 0):
+        msg += tokenizer.decode(input_tokens[0 : int(pred_triples[sort_idxs[0]][1])])
+        for i, idx in enumerate(sort_idxs):
+            triple = pred_triples[idx]
+            msg += " " + colored(
+                tokenizer.decode(input_tokens[int(triple[1]) : int(triple[2])]),
                 "grey",
                 HIGHLIGHTS[idx % len(HIGHLIGHTS)],
             )
-            if idx < len(samples) - 1:
-                msg += input_sentence[
-                    int(sample["end_pos"]) : int(samples[idx + 1]["start_pos"])
-                ]
+            if i < len(sort_idxs) - 1:
+                msg += " " + tokenizer.decode(input_tokens[
+                    int(triple[2]) : int(pred_triples[sort_idxs[i + 1]][1])
+                ])
             else:
-                msg += input_sentence[int(sample["end_pos"]) : ]
+                msg += " " + tokenizer.decode(input_tokens[int(triple[2]) : ])
     else:
-        msg = input_sentence
+        msg = tokenizer.decode(input_tokens)
     print("\n" + str(msg) + "\n")
 
 
-def _print_colorful_prediction(idx, sample, e_id, e_title, e_text, e_url, show_url=False):	
-    print(colored(sample["mention"], "grey", HIGHLIGHTS[idx % len(HIGHLIGHTS)]))	
-    to_print = "id:{}\ntitle:{}\ntext:{}\n".format(e_id, e_title, e_text[:256])	
-    if show_url:	
-        to_print += "url:{}\n".format(e_url)	
-    print(to_print)
+def _print_colorful_prediction(all_entity_preds, pred_triples, id2text, id2kb):
+    sort_idxs = sorted(range(len(pred_triples)), key=lambda idx: pred_triples[idx][1])
+    for idx in sort_idxs:
+        print(colored(all_entity_preds[0]['pred_tuples_string'][idx][1], "grey", HIGHLIGHTS[idx % len(HIGHLIGHTS)]))
+        if pred_triples[idx][0] in id2kb:
+            print("    Wikidata ID: {}".format(id2kb[pred_triples[idx][0]]))
+        print("    Title: {}".format(all_entity_preds[0]['pred_tuples_string'][idx][0]))
+        print("    Score: {}".format(str(all_entity_preds[0]['scores'][idx])))
+        print("    Triple: {}".format(str(pred_triples[idx])))
+        print("    Text: {}".format(id2text[pred_triples[idx][0]]))
 
 
 def _load_candidates(
@@ -733,8 +744,14 @@ def run(
     print(args.output_path)
 
     stopping_condition = False
-    threshold = -2.9
+    threshold = -4.5
     if args.interactive:
+        logger.info("Loading id2text")
+        id2text = json.load(open("models/id2text.json"))
+        logger.info("Finish loading id2text")
+        logger.info("Loading id2kb")
+        id2kb = json.load(open("models/id2kb.json"))
+        logger.info("Finish loading id2kb")
         while not stopping_condition:
 
             logger.info("interactive mode")
@@ -768,11 +785,10 @@ def run(
                     samples, nns, dists, mention_scores, cand_scores,
                     pred_mention_bounds, id2title, threshold=threshold,
                 )
-                print(samples[0]['text'])
-                print("\n".join([
-                    entity[1] + "\n    Title: " + entity[0] + "\n    Score: " + str(all_entity_preds[0]['scores'][idx]) + "\n    Tuple: " + str(all_entity_preds[0]['pred_triples'][idx])
-                    for idx, entity in enumerate(all_entity_preds[0]['pred_tuples_string'])
-                ]))
+
+                pred_triples = all_entity_preds[0]['pred_triples']
+                _print_colorful_text(all_entity_preds[0]['tokens'], tokenizer, pred_triples)
+                _print_colorful_prediction(all_entity_preds, pred_triples, id2text, id2kb)
                 action = input("Next question [n] / change threshold [c]: ")
                 while action != "n" and action != "c":
                     action = input("Next question [n] / change threshold [c]: ")

@@ -505,17 +505,17 @@ def _get_test_samples(
     return test_samples, kb2id, id2kb, num_unk, sample_to_all_context_inputs
 
 
-def _process_biencoder_dataloader(samples, tokenizer, biencoder_params):
+def _process_biencoder_dataloader(samples, tokenizer, biencoder_params, logger):
     tokens_data, tensor_data_tuple = process_mention_data(
         samples=samples,
         tokenizer=tokenizer,
         max_context_length=biencoder_params["max_context_length"],
         max_cand_length=biencoder_params["max_cand_length"],
         silent=False,
-        logger=None,
+        logger=logger,
         debug=biencoder_params["debug"],
         add_mention_bounds=(not biencoder_params.get("no_mention_bounds", False)),
-        get_cached_representation=False,  # TODO???
+        # get_cached_representation=False,  # TODO???
     )
     tensor_data = TensorDataset(*tensor_data_tuple)
     sampler = SequentialSampler(tensor_data)
@@ -582,8 +582,6 @@ def _run_biencoder(
 
             if not jointly_extract_mentions:
                 gold_mention_idx_mask = torch.ones(mention_idxs.size()[:2], dtype=torch.bool)
-                import pdb
-                pdb.set_trace()
                 scores, mention_logits, mention_bounds = biencoder.score_candidate(
                     context_input, None,
                     cand_encs=candidate_encoding.to(device),
@@ -1062,7 +1060,7 @@ def run(
         if not os.path.exists(os.path.join(args.save_preds_dir, 'runtime.txt')):
             logger.info("Preparing data for biencoder....")
             dataloader = _process_biencoder_dataloader(
-                samples, biencoder.tokenizer, biencoder_params
+                samples, biencoder.tokenizer, biencoder_params, logger
             )
             logger.info("Finished preparing data for biencoder")
 

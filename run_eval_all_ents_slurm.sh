@@ -25,13 +25,14 @@
 
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
 # bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_false_bert_large_qa_linear' joint 0.25 100 joint_0
-# bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0
+# bash run_eval_all_ents_slurm.sh AIDA-YAGO2 test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0
 # srun --gpus-per-node=8 --partition=learnfair --time=3000 --cpus-per-task 80 --pty -l \
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;6' joint 0.25 100 joint_0 64
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;11' joint 0.25 100 joint_0 64
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_large_qa_linear;2' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_large_qa_linear/all.t7'
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_base_qa_linear/all.t7'
 
+# bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_base_qa_linear/all.t7'
 
 test_questions=$1  # WebQSP_EL/AIDA-YAGO2/graphquestions_EL
 subset=$2  # test/dev/train_only
