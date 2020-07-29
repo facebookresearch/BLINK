@@ -4,6 +4,22 @@ All data is under `/checkpoint/belindali/entity_link/data/*/tokenized`
 
 **TODO: Release tokenized version of data (alongside original)**
 
+### Model Architecture
+**TODO cite paper**
+
+### Setup
+1. Create conda environment and install requirements
+```
+conda create -n blink37 -y python=3.7 && conda activate blink37
+pip install -r requirements.txt
+```
+
+2. Download the models and entity embeddings
+```console
+chmod +x download_models.sh
+./download_models.sh
+```
+
 
 ### Training
 ```console
