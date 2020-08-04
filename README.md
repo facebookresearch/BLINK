@@ -28,7 +28,7 @@ python blink/main_dense_all_ents.py -i \
     --entity_encoding models/all_entities_large.t7 \
     --biencoder_model experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear/epoch_22/pytorch_model.bin \
     --biencoder_config experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear/training_params.txt \
-    -n joint_all_ents --mention_classifier_threshold 0.0 --top_k 50 --final_thresholding joint
+    -n joint_all_ents --threshold -4.5 --top_k 50 --final_thresholding joint
 ```
 
 ### Training
@@ -37,7 +37,7 @@ sbatch examples/train_biencoder.sh webqsp_all_ents all_avg train 128 true 20 tru
 ```
 
 ```console
-sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 11 64
+sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 22 64
 sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 false false large qa_linear 0 -1 3 64
 sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 false false base qa_linear 0 -1 10 64
 ```

@@ -10,8 +10,8 @@
 set -e
 set -u
 
-ROOD_DIR="$(realpath $(dirname "$0"))"
-DST_DIR="$ROOD_DIR/models"
+ROOT_DIR="$(realpath $(dirname "$0"))"
+DST_DIR="$ROOT_DIR/models"
 
 mkdir -p "$DST_DIR"
 cd "$DST_DIR"
@@ -32,12 +32,4 @@ if [[ ! -f all_entities_large.t7 ]]; then
     wget http://dl.fbaipublicfiles.com/BLINK/all_entities_large.t7
 fi
 
-if [[ ! -f crossencoder_wiki_large.bin ]]; then
-    wget http://dl.fbaipublicfiles.com/BLINK/crossencoder_wiki_large.bin
-fi
-
-if [[ ! -f crossencoder_wiki_large.json ]]; then
-    wget http://dl.fbaipublicfiles.com/BLINK/crossencoder_wiki_large.json
-fi
-
-cd "$ROOD_DIR"
+cd "$ROOT_DIR"

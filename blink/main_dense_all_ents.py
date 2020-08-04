@@ -7,7 +7,7 @@
 import argparse
 import json
 import sys
-import faiss
+from blink.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer
 
 from tqdm import tqdm
 import logging
@@ -91,12 +91,45 @@ def _print_colorful_prediction(all_entity_preds, pred_triples, id2text, id2kb):
 
 
 def _load_candidates(
-    entity_catalogue, entity_encoding, entity_token_ids, biencoder, max_seq_length,
-    get_kbids=True, logger=None,
+    entity_catalogue, entity_encoding, entity_token_ids,
+    faiss_index=None, index_path=None,
+    logger=None,
 ):
+    logger.info("Loading candidate encodings")
+    if faiss_index is None:
+        candidate_encoding = torch.load(entity_encoding)
+        indexer = None
+    else:
+        if logger:
+            logger.info("Using faiss index to retrieve entities.")
+        candidate_encoding = None
+        assert index_path is not None, "Error! Empty indexer path."
+        if faiss_index == "flat":
+            indexer = DenseFlatIndexer(1)
+        elif faiss_index == "hnsw":
+            indexer = DenseHNSWFlatIndexer(1)
+        else:
+            raise ValueError("Error! Unsupported indexer type! Choose from flat,hnsw.")
+        indexer.deserialize_from(index_path)
+
     candidate_encoding = torch.load(entity_encoding)
     candidate_token_ids = torch.load(entity_token_ids)
-    return candidate_encoding, candidate_token_ids
+    logger.info("Finished loading candidate encodings")
+
+    logger.info("Loading id2title")
+    id2title = json.load(open("models/id2title.json"))
+    logger.info("Finish loading id2title")
+    logger.info("Loading id2text")
+    id2text = json.load(open("models/id2text.json"))
+    logger.info("Finish loading id2text")
+    logger.info("Loading id2kb")
+    id2kb = json.load(open("models/id2kb.json"))
+    logger.info("Finish loading id2kb")
+
+    return (
+        candidate_encoding, candidate_token_ids, indexer, 
+        id2title, id2text, id2kb,
+    )
 
 
 def _get_test_samples(
@@ -239,8 +272,7 @@ def _run_biencoder(
     args, biencoder, dataloader, candidate_encoding, samples,
     top_k=100, device="cpu", jointly_extract_mentions=False,
     sample_to_all_context_inputs=None, num_mentions=10,  # TODO don't hardcode
-    mention_classifier_threshold=0.0,
-    cand_encs_flat_index=None,
+    threshold=0.0, indexer=None,
 ):
     """
     Returns: tuple
@@ -310,7 +342,7 @@ def _run_biencoder(
             #   [:,:,1]: index into top mention in mention_bounds
             mention_pos = torch.stack([torch.arange(mention_pos.size(0)).to(mention_pos.device).unsqueeze(-1).expand_as(mention_pos), mention_pos], dim=-1)
             # DIM (bsz, top_k)
-            top_mention_pos_mask = torch.sigmoid(top_mention_logits) > mention_classifier_threshold
+            top_mention_pos_mask = torch.sigmoid(top_mention_logits).log() > threshold
             # DIM (total_possible_mentions, 2)
             #   tuples of [index of batch, index into mention_bounds] of what mentions to include
             mention_pos = mention_pos[top_mention_pos_mask | (
@@ -336,46 +368,53 @@ def _run_biencoder(
                 embedding_ctxt = biencoder_model.linear_compression(embedding_ctxt)
             # (all_pred_mentions_batch, embed_dim)
             embedding_ctxt = embedding_ctxt[left_align_mask]
-            # DIM (num_total_mentions, num_candidates)
-            # TODO search for topK entities with FAISS
-            try:
+
+            if indexer is None:
+                try:
+                    # start_time = time.time()
+                    if embedding_ctxt.size(0) > 1:
+                        embedding_ctxt = embedding_ctxt.squeeze(0)
+                    # DIM (all_pred_mentions_batch, all_cand_entities)
+                    cand_logits = embedding_ctxt.mm(candidate_encoding.to(device).t())
+                    # DIM (all_pred_mentions_batch, 10); (all_pred_mentions_batch, 10)
+                    top_cand_logits_shape, top_cand_indices_shape = cand_logits.topk(10, dim=-1, sorted=True)
+                    # end_time = time.time()
+                except:
+                    # for memory savings, go through one chunk of candidates at a time
+                    SPLIT_SIZE=1000000
+                    done=False
+                    while not done:
+                        top_cand_logits_list = []
+                        top_cand_indices_list = []
+                        max_chunk = int(len(candidate_encoding) / SPLIT_SIZE)
+                        for chunk_idx in range(max_chunk):
+                            try:
+                                # DIM (num_total_mentions, 10); (num_total_mention, 10)
+                                top_cand_logits, top_cand_indices = embedding_ctxt.mm(candidate_encoding[chunk_idx*SPLIT_SIZE:(chunk_idx+1)*SPLIT_SIZE].to(device).t().contiguous()).topk(10, dim=-1, sorted=True)
+                                top_cand_logits_list.append(top_cand_logits)
+                                top_cand_indices_list.append(top_cand_indices + chunk_idx*SPLIT_SIZE)
+                                if len((top_cand_indices_list[chunk_idx] < 0).nonzero()) > 0:
+                                    import pdb
+                                    pdb.set_trace()
+                            except:
+                                SPLIT_SIZE = int(SPLIT_SIZE/2)
+                                break
+                        if len(top_cand_indices_list) == max_chunk:
+                            # DIM (num_total_mentions, 10); (num_total_mentions, 10) --> top_top_cand_indices_shape indexes into top_cand_indices
+                            top_cand_logits_shape, top_top_cand_indices_shape = torch.cat(top_cand_logits_list, dim=-1).topk(10, dim=-1, sorted=True)
+                            # make indices index into candidate_encoding
+                            # DIM (num_total_mentions, max_chunk*10)
+                            all_top_cand_indices = torch.cat(top_cand_indices_list, dim=-1)
+                            # DIM (num_total_mentions, 10)
+                            top_cand_indices_shape = all_top_cand_indices.gather(-1, top_top_cand_indices_shape)
+                            done = True
+            else:
                 # start_time = time.time()
-                if embedding_ctxt.size(0) > 1:
-                    embedding_ctxt = embedding_ctxt.squeeze(0)
-                # DIM (all_pred_mentions_batch, all_cand_entities)
-                cand_logits = embedding_ctxt.mm(candidate_encoding.to(device).t())
-                # end_time = time.time()
                 # DIM (all_pred_mentions_batch, 10); (all_pred_mentions_batch, 10)
-                top_cand_logits_shape, top_cand_indices_shape = cand_logits.topk(10, dim=-1, sorted=True)
-            except:
-                # for memory savings, go through one chunk of candidates at a time
-                SPLIT_SIZE=1000000
-                done=False
-                while not done:
-                    top_cand_logits_list = []
-                    top_cand_indices_list = []
-                    max_chunk = int(len(candidate_encoding) / SPLIT_SIZE)
-                    for chunk_idx in range(max_chunk):
-                        try:
-                            # DIM (num_total_mentions, 10); (num_total_mention, 10)
-                            top_cand_logits, top_cand_indices = embedding_ctxt.mm(candidate_encoding[chunk_idx*SPLIT_SIZE:(chunk_idx+1)*SPLIT_SIZE].to(device).t().contiguous()).topk(10, dim=-1, sorted=True)
-                            top_cand_logits_list.append(top_cand_logits)
-                            top_cand_indices_list.append(top_cand_indices + chunk_idx*SPLIT_SIZE)
-                            if len((top_cand_indices_list[chunk_idx] < 0).nonzero()) > 0:
-                                import pdb
-                                pdb.set_trace()
-                        except:
-                            SPLIT_SIZE = int(SPLIT_SIZE/2)
-                            break
-                    if len(top_cand_indices_list) == max_chunk:
-                        # DIM (num_total_mentions, 10); (num_total_mentions, 10) --> top_top_cand_indices_shape indexes into top_cand_indices
-                        top_cand_logits_shape, top_top_cand_indices_shape = torch.cat(top_cand_logits_list, dim=-1).topk(10, dim=-1, sorted=True)
-                        # make indices index into candidate_encoding
-                        # DIM (num_total_mentions, max_chunk*10)
-                        all_top_cand_indices = torch.cat(top_cand_indices_list, dim=-1)
-                        # DIM (num_total_mentions, 10)
-                        top_cand_indices_shape = all_top_cand_indices.gather(-1, top_top_cand_indices_shape)
-                        done = True
+                top_cand_logits_shape, top_cand_indices_shape = indexer.search_knn(embedding_ctxt.numpy(), 10)
+                top_cand_logits_shape = torch.tensor(top_cand_logits_shape)
+                top_cand_indices_shape = torch.tensor(top_cand_indices_shape)
+                # end_time = time.time()
 
             # DIM (bs, max_num_pred_mentions, 10)
             top_cand_logits = torch.zeros(chosen_mention_logits.size(0), chosen_mention_logits.size(1), top_cand_logits_shape.size(-1)).to(
@@ -689,28 +728,27 @@ def load_models(args, logger):
     # load candidate entities
     logger.info("loading candidate entities")
 
-    if args.debug_biencoder:
-        candidate_encoding, candidate_token_ids = _load_candidates(
-            "/private/home/belindali/temp/BLINK-Internal/models/entity_debug.jsonl",
-            "/private/home/belindali/temp/BLINK-Internal/models/entity_encode_debug.t7",
-            "/private/home/belindali/temp/BLINK-Internal/models/entity_ids_debug.t7",  # TODO MAKE THIS FILE!!!!
-            biencoder, biencoder_params["max_cand_length"], args.entity_catalogue == args.test_entities, logger=logger
-        )
-    else:
-        (
-            candidate_encoding,
-            candidate_token_ids,
-        ) = _load_candidates(
-            args.entity_catalogue, args.entity_encoding, args.entity_token_ids,
-            biencoder, biencoder_params["max_cand_length"], args.entity_catalogue == args.test_entities,
-            logger=logger
-        )
+    (
+        candidate_encoding,
+        candidate_token_ids,
+        indexer,
+        id2title,
+        id2text,
+        id2kb,
+    ) = _load_candidates(
+        args.entity_catalogue, args.entity_encoding, args.entity_token_ids,
+        args.faiss_index, args.index_path, logger=logger,
+    )
 
     return (
         biencoder,
         biencoder_params,
         candidate_encoding,
         candidate_token_ids,
+        indexer,
+        id2title,
+        id2text,
+        id2kb,
     )
 
 
@@ -721,10 +759,11 @@ def run(
     biencoder_params,
     candidate_encoding,
     candidate_token_ids,
+    indexer,
+    id2title,
+    id2text,
+    id2kb,
 ):
-    logger.info("Loading id2title")
-    id2title = json.load(open("models/id2title.json"))
-    logger.info("Finish loading id2title")
 
     if not args.test_mentions and not args.interactive and not args.qa_data:
         msg = (
@@ -742,14 +781,7 @@ def run(
     print(args.output_path)
 
     stopping_condition = False
-    threshold = -4.5
     if args.interactive:
-        logger.info("Loading id2text")
-        id2text = json.load(open("models/id2text.json"))
-        logger.info("Finish loading id2text")
-        logger.info("Loading id2kb")
-        id2kb = json.load(open("models/id2kb.json"))
-        logger.info("Finish loading id2kb")
         while not stopping_condition:
 
             logger.info("interactive mode")
@@ -768,9 +800,7 @@ def run(
                 args, biencoder, dataloader, candidate_encoding, samples=samples,
                 top_k=args.top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
                 jointly_extract_mentions=("joint" in args.do_ner),
-                # num_mentions=int(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
-                mention_classifier_threshold=float(args.mention_classifier_threshold) if "joint" in args.do_ner else None,
-                # cand_encs_flat_index=cand_encs_flat_index
+                threshold=float(args.threshold) if "joint" in args.do_ner else None, indexer=indexer,
             )
 
             action = "c"
@@ -781,7 +811,7 @@ def run(
                 ) = get_predictions(
                     args, dataloader, biencoder_params,
                     samples, nns, dists, mention_scores, cand_scores,
-                    pred_mention_bounds, id2title, threshold=threshold,
+                    pred_mention_bounds, id2title, threshold=float(args.threshold),
                 )
 
                 pred_triples = all_entity_preds[0]['pred_triples']
@@ -828,9 +858,7 @@ def run(
                 args, biencoder, dataloader, candidate_encoding, samples=samples,
                 top_k=args.top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
                 jointly_extract_mentions=("joint" in args.do_ner),
-                # num_mentions=int(args.mention_classifier_threshold) if args.do_ner == "joint" else None,
-                mention_classifier_threshold=float(args.mention_classifier_threshold) if "joint" in args.do_ner else None,
-                # cand_encs_flat_index=cand_encs_flat_index
+                threshold=float(args.threshold) if "joint" in args.do_ner else None, indexer=indexer,
             )
             end_time = time.time()
             logger.info("Finished running biencoder")
@@ -857,7 +885,7 @@ def run(
         ) = get_predictions(
             args, dataloader, biencoder_params,
             samples, nns, dists, mention_scores, cand_scores,
-            pred_mention_bounds, id2title
+            pred_mention_bounds, id2title, float(args.threshold)
         )
         
         print()
@@ -926,12 +954,10 @@ if __name__ == "__main__":
         "(Set 'none' to get gold mention bounds from examples)"
     )
     parser.add_argument(
-        "--mention_classifier_threshold", type=str, default=None, help="Must be specified if '--do_ner qa_classifier'."
-        "Threshold for mention classifier score (either qa or joint) for which examples will be pruned if they fall under that threshold."
+        "--threshold", type=str, default="-4.5", help="Threshold for final joint score, for which examples will be pruned if they fall under that threshold."
     )
     parser.add_argument(
-        "--top_k", type=int, default=50, help="Must be specified if '--do_ner qa_classifier'."
-        "Number of entity candidates to consider per mention"
+        "--top_k", type=int, default=50, help="Number of entity candidates to consider per mention (at most)"
     )
     parser.add_argument(
         "--final_thresholding", type=str, default=None, help="How to threshold the final candidates."
@@ -981,6 +1007,12 @@ if __name__ == "__main__":
         default="models/all_entities_large.t7",  # ALL WIKIPEDIA!
         help="Path to the entity catalogue.",
     )
+    parser.add_argument(
+        "--faiss_index", type=str, default=None, help="whether to use faiss index",
+    )
+    parser.add_argument(
+        "--index_path", type=str, default=None, help="path to load indexer",
+    )
 
     parser.add_argument(
         "--eval_batch_size",
@@ -1003,10 +1035,6 @@ if __name__ == "__main__":
         type=str,
         default="output",
         help="Path to the output.",
-    )
-
-    parser.add_argument(
-        "--fast", dest="fast", action="store_true", help="only biencoder mode"
     )
 
     parser.add_argument(
