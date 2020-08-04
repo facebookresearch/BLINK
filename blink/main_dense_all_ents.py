@@ -28,8 +28,6 @@ from blink.biencoder.data_process import (
 import blink.candidate_ranking.utils as utils
 import math
 
-import blink.vcg_utils
-from blink.vcg_utils.mention_extraction import extract_entities
 from blink.vcg_utils.measures import entity_linking_tp_with_overlap
 
 import os
@@ -487,7 +485,7 @@ def get_predictions(
             all_pred_entities = pred_entity_list[:,:1]
             e_mention_bounds = entity_mention_bounds_idx[:1].tolist()
             # '''
-            if args.final_thresholding == "joint_0":
+            if args.final_thresholding == "joint":
                 # THRESHOLDING
                 assert utterance is not None
                 top_mentions_mask = (distances[:,0] > threshold)
@@ -939,7 +937,7 @@ if __name__ == "__main__":
         "--final_thresholding", type=str, default=None, help="How to threshold the final candidates."
         "`top_joint_by_mention`: get top candidate (with joint score) for each predicted mention bound."
         "`top_entity_by_mention`: get top candidate (with entity score) for each predicted mention bound."
-        "`joint_0`: by thresholding joint score to > 0."
+        "`joint`: by thresholding joint score."
     )
 
 

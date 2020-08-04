@@ -20,6 +20,16 @@ chmod +x download_models.sh
 ./download_models.sh
 ```
 
+### Interactive Mode
+```console
+python blink/main_dense_all_ents.py -i \
+    --test_entities models/entity.jsonl \
+    --entity_catalogue models/entity.jsonl \
+    --entity_encoding models/all_entities_large.t7 \
+    --biencoder_model experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear/epoch_22/pytorch_model.bin \
+    --biencoder_config experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear/training_params.txt \
+    -n joint_all_ents --mention_classifier_threshold 0.0 --top_k 50 --final_thresholding joint
+```
 
 ### Training
 ```console

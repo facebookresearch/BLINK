@@ -508,7 +508,7 @@ class BiEncoderRanker(torch.nn.Module):
             self.model = torch.nn.DataParallel(self.model)
 
     def load_model(self, fname, cpu=False, cand_enc_only=False):
-        if cpu:
+        if cpu or not torch.cuda.is_available():
             state_dict = torch.load(fname, map_location=lambda storage, location: "cpu")
         else:
             state_dict = torch.load(fname)
