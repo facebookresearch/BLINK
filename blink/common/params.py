@@ -311,6 +311,13 @@ class BlinkParser(argparse.ArgumentParser):
             help="Only load the candidate encoder from saved model path",
         )
         parser.add_argument(
+            "--cand_enc_path",
+            default="models/all_entities_large.t7",
+            type=str,
+            required=False,
+            help="Filepath to the last checkpoint's training state to load.",
+        )
+        parser.add_argument(
             "--adversarial_training",
             default=False,
             action="store_true",

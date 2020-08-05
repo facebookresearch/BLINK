@@ -332,8 +332,8 @@ def main(params):
     cand_encs = None
     cand_encs_flat_index = None
     if params["freeze_cand_enc"]:
-        cand_encs = torch.load("/private/home/belindali/BLINK/models/all_entities_large.t7")  # TODO DONT HARDCODE THESE PATHS
-        cand_encs_npy = np.load("/private/home/belindali/BLINK/models/all_entities_large.npy")  # TODO DONT HARDCODE THESE PATHS
+        cand_encs = torch.load(params['cand_enc_path'])  # TODO DONT HARDCODE THESE PATHS
+        cand_encs_npy = cand_encs.numpy()
         logger.info("Loaded saved entity encodings")
         if params["debug"]:
             cand_encs = cand_encs[:200]
@@ -430,10 +430,7 @@ def main(params):
         tr_loss = 0
         results = None
 
-        if params["dont_distribute_train_samples"]:
-            start_idx = 0
-            end_idx = num_samples_per_batch
-        else:
+        if not params["dont_distribute_train_samples"]:
             start_idx = epoch_idx * num_samples_per_batch
             end_idx = (epoch_idx + 1) * num_samples_per_batch
 
@@ -452,9 +449,9 @@ def main(params):
                 candidate_token_ids=candidate_token_ids,
             )
             logger.info("Finished preparing training data for epoch {}: {} samples".format(epoch_idx, len(train_tensor_data_tuple[0])))
+    
         batch_train_tensor_data = TensorDataset(
             *list(train_tensor_data_tuple)
-            # *[element[start_idx:end_idx] for element in train_tensor_data_tuple]
         )
         if params["shuffle"]:
             train_sampler = RandomSampler(batch_train_tensor_data)
@@ -630,13 +627,6 @@ def main(params):
                 )
                 model.train()
                 logger.info("\n")
-
-                # if (step + 1) % (params["eval_interval"] * grad_acc_steps * 10) == 0:
-                #     logger.info("***** Saving fine - tuned model *****")
-                #     epoch_output_folder_path = os.path.join(
-                #         model_output_path, "epoch_{}_step_{}".format(epoch_idx, step + 1)
-                #     )
-                #     utils.save_model(model, tokenizer, epoch_output_folder_path)
 
         logger.info("***** Saving fine - tuned model *****")
         epoch_output_folder_path = os.path.join(

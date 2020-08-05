@@ -317,13 +317,13 @@ def load_graphqs_examples(filepath):
         all_examples["train"] = train_exs
         all_examples["dev"] = dev_exs
 
-    # json.dump(train_dev_examples, open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/WebQSP_EL/webqsp.train.entities.json", "w"))
+    # json.dump(train_dev_examples, open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/graphquestions_EL/graph.train.entities.json", "w"))
 
     with open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/graphquestions_EL/graph.test.entities.json") as f:
         test_examples = json.load(f)
         all_examples["test"] = test_examples
 
-    # json.dump(test_examples, open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/WebQSP_EL/webqsp.test.entities.with_classes.json", "w"))
+    # json.dump(test_examples, open("/private/home/belindali/starsem2018-entity-linking/data/EL_data/graphquestions_EL/graph.test.entities.with_classes.json", "w"))
 
     for split in all_examples:
         print("{}: {}".format(split, len(all_examples[split])))

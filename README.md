@@ -32,10 +32,28 @@ python blink/main_dense_all_ents.py -i \
 ```
 
 ### Training
+Train on WebQSP
 ```console
 sbatch examples/train_biencoder.sh webqsp_all_ents all_avg train 128 true 20 true true large qa_linear
 ```
+Saves under
+```
+experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear
+```
 
+Finetune on WebQSP
+1. Copy pretraining checkpoint directory `experiments/wiki_all_ents/*/epoch_*` to `experiments/webqsp_all_ents/all_mention_biencoder_all_avg_true_32_true_true_bert_large_qa_linear/epoch_0`
+2. Delete the saved trainer state (to reset trainer from scratch): `rm experiments/webqsp_all_ents/all_mention_biencoder_all_avg_true_32_true_true_bert_large_qa_linear/epoch_0/training_state.th`
+3. Run:
+```console
+sbatch examples/train_biencoder.sh webqsp_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 0
+```
+Saves under
+```
+experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear
+```
+
+Train on Wikipedia
 ```console
 sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 22 64
 sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 false false large qa_linear 0 -1 3 64
@@ -64,21 +82,26 @@ Saves under `models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_
 
 ### Evaluation
 ```console
-CUDA_VISIBLE_DEVICES=0 bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' joint 0.0 50 joint_0
+CUDA_VISIBLE_DEVICES=0 bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' joint -2.9 50 joint
 
-CUDA_VISIBLE_DEVICES=1 bash run_eval_all_ents_slurm.sh graphquestions_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' joint 0.0 50 joint_0
+CUDA_VISIBLE_DEVICES=1 bash run_eval_all_ents_slurm.sh graphquestions_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' joint -2.9 50 joint
 
-srun --gpus-per-node=8 --partition=learnfair --time=3000 --cpus-per-task 80 --pty -l bash run_eval_all_ents_slurm.sh nq ${split} 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear' joint 0.25 100 joint_0 16
+srun --gpus-per-node=8 --partition=learnfair --time=3000 --cpus-per-task 80 --pty -l bash run_eval_all_ents_slurm.sh nq ${split} 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear' joint -4.5 50 joint 16
 ```
 
-The following table summarizes the performance of BLINK for the considered datasets.
+Best threshold is -2.9 for WebQSP/Wiki, -3.5 for AIDA-YAGO.
+
+The following table summarizes the performance of BLINK for the considered datasets. (Weak matching)
 
 model | dataset | biencoder precision | biencoder recall | biencoder F1 | runtime (s), bsz=64 |
 ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
 WebQSP train | WebQSP test | 0.8999 | 0.8498 | 0.8741 | 183.4 |
 WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
-Wiki train | WebQSP test | 0.8578 | 0.8254 | 0.8413 | ? |
-Wiki train | GraphQuestions test | 0.6959 | 0.6975 | 0.6967 | ? |
+Wiki train (e15) | WebQSP test | 0.8578 | 0.8254 | 0.8413 | ? |
+Wiki train (e15) | GraphQuestions test | 0.6959 | 0.6975 | 0.6967 | ? |
+Wiki train (e23) | AIDA-YAGO2 test(?) | 0.7424 | 0.7303 | 0.7363 | ? |
+
+TODO: make training adversarial selection stricter?
 
 
 ## The BLINK knowledge base

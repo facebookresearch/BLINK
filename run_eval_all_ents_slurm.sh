@@ -32,19 +32,20 @@
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_large_qa_linear;2' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_large_qa_linear/all.t7'
 # bash run_eval_all_ents_slurm.sh _ test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_base_qa_linear/all.t7'
 
-# bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint_0 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_base_qa_linear/all.t7'
+# bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_false_false_bert_base_qa_linear;10' joint 0.25 100 joint 64 'models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_base_qa_linear/all.t7'
+# bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_base_qa_linear;15' joint -4.5 50 joint 1
 
 test_questions=$1  # WebQSP_EL/AIDA-YAGO2/graphquestions_EL
 subset=$2  # test/dev/train_only
 model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
 ner=$4  # joint/qa_classifier/ngram/single/flair/joint_all_ents_pretokenized
-mention_classifier_threshold=$5  # 0.25
-top_k=$6  # 100
-final_thresholding=$7  # top_joint_by_mention / top_entity_by_mention / joint_0
+threshold=$5  # -4.5/-2.9/-inf for no pruning
+top_k=$6  # 50
+final_thresholding=$7  # top_joint_by_mention / top_entity_by_mention / joint
 eval_batch_size=$8  # 64
 entity_encoding=$9  # file for entity encoding
 debug="false"  # "true"/<anything other than "true"> (does debug_cross)
-gpu="true"
+gpu=${10}
 
 export PYTHONPATH=.
 
@@ -65,8 +66,8 @@ fi
 
 mentions_file="/checkpoint/belindali/entity_link/data/${test_questions}/tokenized/${subset}.jsonl"
 
-mention_classifier_threshold_args="--mention_classifier_threshold ${mention_classifier_threshold}"
-echo $mention_classifier_threshold_args
+threshold_args="--threshold ${threshold}"
+echo $threshold_args
 
 if [ "${gpu}" = "false" ]
 then
@@ -110,7 +111,7 @@ then
     then
         max_context_length_args="--max_context_length 256"
     fi
-    if [ "${entity_encoding}" = "" ]
+    if [ "${entity_encoding}" = "" ] || [ "${entity_encoding}" = "_" ]
     then
         entity_encoding=/private/home/belindali/BLINK/models/all_entities_large.t7
     fi
@@ -138,11 +139,11 @@ command="python blink/main_dense_all_ents.py -q \
     --entity_encoding ${entity_encoding} \
     --biencoder_model ${biencoder_model} \
     --biencoder_config ${biencoder_config} \
-    --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_${ner}${mention_classifier_threshold}_top${top_k}cands_final_${final_thresholding}${save_dir_batch} \
-    -n joint_all_ents ${mention_classifier_threshold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
-    --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args} ${max_context_length_args}"
-    # --no_mention_bounds_biencoder --mention_aggregation_type all_avg"
-    # --eval_main_entity
+    --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_${ner}${threshold}_top${top_k}cands_final_${final_thresholding}${save_dir_batch} \
+    -n joint_all_ents ${threhsold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
+    --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args} ${max_context_length_args} ${threshold_args}"
+    # \
+    # --faiss_index flat --index_path models/faiss_flat_index.pkl"
 
 echo "${command}"
 

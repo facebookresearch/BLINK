@@ -150,87 +150,56 @@ fi
 if [ "${objective}" = "both" ] || [ "${objective}" = "train" ]
 then
   echo "Running ${mention_agg_type} biencoder training on ${data} dataset."
-  if [ "${data}" = "pretrain" ]
+  distribute_train_samples_arg=""
+  if [ "${data}" != "wiki_all_ents" ]
   then
-    if [ "${batch_size}" = "" ]
-    then
-      batch_size="128"
-    fi
-    output_path="experiments/pretrain/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
-    if [ "${epoch}" != "-1" ]
-    then
-      model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
-    fi
-
-    echo "Mention aggregation args: ${all_mention_args}"
-    echo "Model path loading args: ${model_path_arg}"
-    cmd="python blink/biencoder/train_biencoder.py \
-      --output_path ${output_path} \
-      --data_path /private/home/ledell/data/wiki_ent2 \
-      --title_key entity \
-      --num_train_epochs 100 \
-      --learning_rate 0.00001 \
-      --train_batch_size ${batch_size} \
-      --eval_batch_size ${batch_size} \
-      --bert_model ${model_ckpt} \
-      ${all_mention_args} ${cand_enc_args} \
-      --eval_interval 1000 \
-      --last_epoch ${epoch} ${model_path_arg} \
-      --max_context_length ${context_length} \
-      --mention_scoring_method ${mention_scoring_method} \
-      --data_parallel --get_losses"
-      # --adversarial_training
-      # --debug
-      # --start_idx ${chunk_start} --end_idx ${chunk_end}   # TODO DELETE THIS LATER!!!!!
-    echo $cmd
-    $cmd
-  else
-    if [ "${batch_size}" = "" ]
-    then
-      batch_size="32"
-    fi
-    if [ "${eval_batch_size}" = "" ]
-    then
-      eval_batch_size="32"
-    fi
-    #--load_cand_enc_only \
-    model_path_arg=""
-    output_path="experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
-    if [ "${epoch}" != "-1" ]
-    then
-      model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
-      if [ "${load_saved_cand_encs}" = "true" ]
-      then
-        cand_enc_args="--freeze_cand_enc --adversarial_training"
-      fi
-    else
-      if [ "${load_saved_cand_encs}" = "true" ]
-      then
-        model_path_arg="--path_to_model /private/home/ledell/BLINK-Internal/models/biencoder_wiki_large.bin"
-      fi
-    fi
-    #  --freeze_cand_enc 
-      # --dont_distribute_train_samples \
-    cmd="python blink/biencoder/train_biencoder.py \
-      --output_path $output_path \
-      ${model_path_arg} ${cand_enc_args} \
-      --title_key entity \
-      --data_path ${data_path} \
-      --num_train_epochs 100 \
-      --learning_rate 0.00001 \
-      --max_context_length ${context_length} \
-      --max_cand_length 128 \
-      --train_batch_size ${batch_size} \
-      --eval_batch_size ${eval_batch_size} \
-      --bert_model ${model_ckpt} \
-      --mention_scoring_method ${mention_scoring_method} \
-      --eval_interval 500 \
-      --last_epoch ${epoch} \
-      ${all_mention_args} --data_parallel --get_losses"  #--debug  #
-      # --adversarial_training
-    echo $cmd
-    $cmd
+    distribute_train_samples_arg="--dont_distribute_train_samples"
   fi
+  if [ "${batch_size}" = "" ]
+  then
+    batch_size="32"
+  fi
+  if [ "${eval_batch_size}" = "" ]
+  then
+    eval_batch_size="32"
+  fi
+  #--load_cand_enc_only \
+  model_path_arg=""
+  output_path="experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
+  if [ "${epoch}" != "-1" ]
+  then
+    model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
+    if [ "${load_saved_cand_encs}" = "true" ]
+    then
+      cand_enc_args="--freeze_cand_enc --adversarial_training --cand_enc_path models/"
+    fi
+  else
+    if [ "${load_saved_cand_encs}" = "true" ]
+    then
+      model_path_arg="--path_to_model /private/home/ledell/BLINK-Internal/models/biencoder_wiki_large.bin"
+    fi
+  fi
+  #  --freeze_cand_enc 
+    # --dont_distribute_train_samples \
+  cmd="python blink/biencoder/train_biencoder.py \
+    --output_path $output_path \
+    ${model_path_arg} ${cand_enc_args} \
+    --title_key entity \
+    --data_path ${data_path} \
+    --num_train_epochs 100 \
+    --learning_rate 0.00001 \
+    --max_context_length ${context_length} \
+    --max_cand_length 128 \
+    --train_batch_size ${batch_size} \
+    --eval_batch_size ${eval_batch_size} \
+    --bert_model ${model_ckpt} \
+    --mention_scoring_method ${mention_scoring_method} \
+    --eval_interval 500 \
+    --last_epoch ${epoch} \
+    ${all_mention_args} --data_parallel --get_losses ${distribute_train_samples_arg}"  #--debug  #
+    # --adversarial_training
+  echo $cmd
+  $cmd
 fi
 
 # echo "Running ${mention_agg_type} biencoder full evaluation on ${data} dataset."
