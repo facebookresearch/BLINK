@@ -476,15 +476,17 @@ def get_predictions(
         args, dataloader, biencoder_params, samples, nns, dists, pred_mention_bounds
     Returns:
         all_entity_preds,
-        num_correct, num_predicted, num_gold,
-        num_correct_from_input_window, num_gold_from_input_window
+        num_correct_weak, num_correct_strong, num_predicted, num_gold,
+        num_correct_weak_from_input_window, num_correct_strong_from_input_window, num_gold_from_input_window
     """
 
     # save biencoder predictions and print precision/recalls
-    num_correct = 0
+    num_correct_weak = 0
+    num_correct_strong = 0
     num_predicted = 0
     num_gold = 0
-    num_correct_from_input_window = 0
+    num_correct_weak_from_input_window = 0
+    num_correct_strong_from_input_window = 0
     num_gold_from_input_window = 0
     all_entity_preds = []
 
@@ -619,8 +621,9 @@ def get_predictions(
                     str(sample['label_id'][j]),
                     sample['tokenized_mention_idxs'][j][0], sample['tokenized_mention_idxs'][j][1],
                 ) for j in range(len(sample['label_id']))]
-                num_overlap = entity_linking_tp_with_overlap(gold_triples, pred_triples)
-                num_correct += num_overlap
+                num_overlap_weak, num_overlap_strong = entity_linking_tp_with_overlap(gold_triples, pred_triples)
+                num_correct_weak += num_overlap_weak
+                num_correct_strong += num_overlap_strong
                 num_predicted += len(all_pred_entities_pruned)
                 num_gold += len(sample["label_id"])
 
@@ -634,7 +637,9 @@ def get_predictions(
                     str(input_label_ids[j]),
                     input_mention_idxs[j][0], input_mention_idxs[j][1] + 1,
                 ) for j in range(len(input_label_ids))]
-                num_correct_from_input_window += entity_linking_tp_with_overlap(gold_input_window_triples, pred_input_window_triples)
+                num_overlap_weak_window, num_overlap_strong_window = entity_linking_tp_with_overlap(gold_input_window_triples, pred_input_window_triples)
+                num_correct_weak_from_input_window += num_overlap_weak_window
+                num_correct_strong_from_input_window += num_overlap_strong_window
                 num_gold_from_input_window += len(input_mention_idxs)
 
                 for triple in pred_triples:
@@ -655,7 +660,7 @@ def get_predictions(
                     "tokens": input_context,
                 })
 
-                if errors_f is not None and (num_overlap != len(gold_triples) or num_overlap != len(pred_triples)):
+                if errors_f is not None and (num_overlap_weak != len(gold_triples) or num_overlap_weak != len(pred_triples)):
                     errors_f.write(json.dumps(entity_results) + "\n")
             else:
                 entity_results.update({
@@ -676,7 +681,10 @@ def get_predictions(
     if f is not None:
         f.close()
         errors_f.close()
-    return all_entity_preds, num_correct, num_predicted, num_gold, num_correct_from_input_window, num_gold_from_input_window
+    return (
+        all_entity_preds, num_correct_weak, num_correct_strong, num_predicted, num_gold,
+        num_correct_weak_from_input_window, num_correct_strong_from_input_window, num_gold_from_input_window
+    )
 
 
 def _retrieve_from_saved_biencoder_outs(save_preds_dir):
@@ -693,6 +701,20 @@ def _retrieve_from_saved_biencoder_outs(save_preds_dir):
         dists.append(score.numpy())  # GRAPHQUESTIONS BEST
     np.save(os.path.join(save_preds_dir, "biencoder_dists.npy"), dists)
     return nns, dists, pred_mention_bounds, cand_scores, mention_scores
+
+
+def display_metrics(
+    num_correct, num_predicted, num_gold, prefix="",
+):
+    p = float(num_correct) / float(num_predicted)
+    r = float(num_correct) / float(num_gold)
+    if p + r > 0:
+        f1 = 2 * p * r / (p + r)
+    else:
+        f1 = 0
+    print("{0}precision = {1} / {2} = {3}".format(prefix, num_correct, num_predicted, p))
+    print("{0}recall = {1} / {2} = {3}".format(prefix, num_correct, num_gold, r))
+    print("{0}f1 = {1}".format(prefix, f1))
 
 
 def load_models(args, logger):
@@ -781,6 +803,7 @@ def run(
     print(args.output_path)
 
     stopping_condition = False
+    threshold = float(args.threshold)
     if args.interactive:
         while not stopping_condition:
 
@@ -800,19 +823,16 @@ def run(
                 args, biencoder, dataloader, candidate_encoding, samples=samples,
                 top_k=args.top_k, device="cpu" if biencoder_params["no_cuda"] else "cuda",
                 jointly_extract_mentions=("joint" in args.do_ner),
-                threshold=float(args.threshold) if "joint" in args.do_ner else None, indexer=indexer,
+                threshold=threshold if "joint" in args.do_ner else None, indexer=indexer,
             )
 
             action = "c"
             while action == "c":
-                (
-                    all_entity_preds, num_correct, num_predicted, num_gold,
-                    num_correct_from_input_window, num_gold_from_input_window,
-                ) = get_predictions(
+                all_entity_preds = get_predictions(
                     args, dataloader, biencoder_params,
                     samples, nns, dists, mention_scores, cand_scores,
-                    pred_mention_bounds, id2title, threshold=float(args.threshold),
-                )
+                    pred_mention_bounds, id2title, threshold=threshold,
+                )[0]
 
                 pred_triples = all_entity_preds[0]['pred_triples']
                 _print_colorful_text(all_entity_preds[0]['tokens'], tokenizer, pred_triples)
@@ -880,8 +900,8 @@ def run(
         assert len(samples) == len(nns) == len(dists) == len(pred_mention_bounds) == len(cand_scores) == len(mention_scores)
 
         (
-            all_entity_preds, num_correct, num_predicted, num_gold,
-            num_correct_from_input_window, num_gold_from_input_window,
+            all_entity_preds, num_correct_weak, num_correct_strong, num_predicted, num_gold,
+            num_correct_weak_from_input_window, num_correct_strong_from_input_window, num_gold_from_input_window,
         ) = get_predictions(
             args, dataloader, biencoder_params,
             samples, nns, dists, mention_scores, cand_scores,
@@ -890,25 +910,15 @@ def run(
         
         print()
         if num_predicted > 0 and num_gold > 0:
-            p = float(num_correct) / float(num_predicted)
-            r = float(num_correct) / float(num_gold)
-            p_window = float(num_correct_from_input_window) / float(num_predicted)
-            r_window = float(num_correct_from_input_window) / float(num_gold_from_input_window)
-            if p + r > 0:
-                f1 = 2 * p * r / (p + r)
-            else:
-                f1 = 0
-            if p_window + r_window > 0:
-                f1_window = 2 * p_window * r_window / (p_window + r_window)
-            else:
-                f1_window = 0
-            print("biencoder precision = {} / {} = {}".format(num_correct, num_predicted, p))
-            print("biencoder recall = {} / {} = {}".format(num_correct, num_gold, r))
-            print("biencoder f1 = {}".format(f1))
+            print("WEAK MATCHING")
+            display_metrics(num_correct_weak, num_predicted, num_gold)
             print("Just entities within input window...")
-            print("biencoder precision = {} / {} = {}".format(num_correct_from_input_window, num_predicted, p_window))
-            print("biencoder recall = {} / {} = {}".format(num_correct_from_input_window, num_gold_from_input_window, r_window))
-            print("biencoder f1 = {}".format(f1_window))
+            display_metrics(num_correct_weak_from_input_window, num_predicted, num_gold_from_input_window)
+            print("*--------*")
+            print("STRONG MATCHING")
+            display_metrics(num_correct_strong, num_predicted, num_gold)
+            print("Just entities within input window...")
+            display_metrics(num_correct_strong_from_input_window, num_predicted, num_gold_from_input_window)
             print("*--------*")
             print("biencoder runtime = {}".format(runtime))
 
@@ -954,7 +964,10 @@ if __name__ == "__main__":
         "(Set 'none' to get gold mention bounds from examples)"
     )
     parser.add_argument(
-        "--threshold", type=str, default="-4.5", help="Threshold for final joint score, for which examples will be pruned if they fall under that threshold."
+        "--threshold", type=str, default="-4.5",
+        dest="threshold",
+        help="Threshold for final joint score, for which examples will be pruned if they fall under that threshold."
+        "Set to '-inf' to get all entities."
     )
     parser.add_argument(
         "--top_k", type=int, default=50, help="Number of entity candidates to consider per mention (at most)"

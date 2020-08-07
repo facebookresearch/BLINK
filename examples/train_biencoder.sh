@@ -168,10 +168,14 @@ then
   output_path="experiments/${data}/all_mention_biencoder_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
   if [ "${epoch}" != "-1" ]
   then
-    model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
+    model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin"
+    if [ -f "${output_path}/epoch_${epoch}/training_state.th" ]
+    then
+      model_path_arg="${model_path_arg} --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
+    fi
     if [ "${load_saved_cand_encs}" = "true" ]
     then
-      cand_enc_args="--freeze_cand_enc --adversarial_training --cand_enc_path models/"
+      cand_enc_args="--freeze_cand_enc --adversarial_training --cand_enc_path models/all_entities_large.t7"
     fi
   else
     if [ "${load_saved_cand_encs}" = "true" ]

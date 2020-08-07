@@ -66,7 +66,7 @@ fi
 
 mentions_file="/checkpoint/belindali/entity_link/data/${test_questions}/tokenized/${subset}.jsonl"
 
-threshold_args="--threshold ${threshold}"
+threshold_args="--threshold=${threshold}"
 echo $threshold_args
 
 if [ "${gpu}" = "false" ]
@@ -89,13 +89,17 @@ then
     if [ "${model}" = "finetuned_webqsp" ]
     then
         dir="webqsp"
-        biencoder_config=/checkpoint/belindali/entity_link/saved_models/${dir}/${MODEL_PARSE[1]}/training_params.txt
-        biencoder_model=/checkpoint/belindali/entity_link/saved_models/${dir}/${model_folder}/pytorch_model.bin
+        #biencoder_config=/checkpoint/belindali/entity_link/saved_models/${dir}/${MODEL_PARSE[1]}/training_params.txt
+        #biencoder_model=/checkpoint/belindali/entity_link/saved_models/${dir}/${model_folder}/pytorch_model.bin
+        biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
+        biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
     elif [ "${model}" = "finetuned_webqsp_all_ents" ]
     then
         dir="webqsp_all_ents"
-        biencoder_config=/checkpoint/belindali/entity_link/saved_models/${dir}/${MODEL_PARSE[1]}/training_params.txt
-        biencoder_model=/checkpoint/belindali/entity_link/saved_models/${dir}/${model_folder}/pytorch_model.bin
+        #biencoder_config=/checkpoint/belindali/entity_link/saved_models/${dir}/${MODEL_PARSE[1]}/training_params.txt
+        #biencoder_model=/checkpoint/belindali/entity_link/saved_models/${dir}/${model_folder}/pytorch_model.bin
+        biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
+        biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
     elif [ "${model}" = "wiki_all_ents" ]
     then
         dir="wiki_all_ents"
@@ -140,8 +144,8 @@ command="python blink/main_dense_all_ents.py -q \
     --biencoder_model ${biencoder_model} \
     --biencoder_config ${biencoder_config} \
     --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_${ner}${threshold}_top${top_k}cands_final_${final_thresholding}${save_dir_batch} \
-    -n joint_all_ents ${threhsold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
-    --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args} ${max_context_length_args} ${threshold_args}"
+    -n joint_all_ents ${threshold_args} --top_k ${top_k} --final_thresholding ${final_thresholding} \
+    --eval_batch_size ${eval_batch_size} ${get_predictions} ${cuda_args} ${max_context_length_args}"
     # \
     # --faiss_index flat --index_path models/faiss_flat_index.pkl"
 
