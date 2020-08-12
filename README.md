@@ -102,16 +102,16 @@ import argparse
 models_path = "models/" # the path where you stored the BLINK models
 
 config = {
-    "test_entities": null,
-    "test_mentions": null,
-    "interactive": false,
+    "test_entities": None,
+    "test_mentions": None,
+    "interactive": False,
     "biencoder_model": models_path+"biencoder_wiki_large.bin",
     "biencoder_config": models_path+"biencoder_wiki_large.json",
     "entity_catalogue": models_path+"entity.jsonl",
     "entity_encoding": models_path+"all_entities_large.t7",
     "crossencoder_model": models_path+"crossencoder_wiki_large.bin",
     "crossencoder_config": models_path+"crossencoder_wiki_large.json",
-    "fast": false, # set this to be true if speed is a concern
+    "fast": False, # set this to be true if speed is a concern
     "output_path": "logs/" # logging directory
 }
 
