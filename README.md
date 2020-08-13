@@ -28,7 +28,8 @@ python blink/main_dense_all_ents.py -i \
     --entity_encoding models/all_entities_large.t7 \
     --biencoder_model experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear/epoch_22/pytorch_model.bin \
     --biencoder_config experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear/training_params.txt \
-    -n joint_all_ents --threshold -4.5 --top_k 50 --final_thresholding joint
+    --threshold -4.5 --num_cand_mentions 50 --num_cand_entities 10 \
+    --threshold_type joint --faiss_index hnsw --index_path models/faiss_hnsw_index.pkl
 ```
 
 ### Training
@@ -83,36 +84,39 @@ Saves under `models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_
 ### Evaluation
 Zero-shot from Wikipedia
 ```console
-CUDA_VISIBLE_DEVICES=0 bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' joint -2.9 50 joint
+CUDA_VISIBLE_DEVICES=0 bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' -2.9 50 joint
 
-CUDA_VISIBLE_DEVICES=1 bash run_eval_all_ents_slurm.sh graphquestions_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' joint -2.9 50 joint
+CUDA_VISIBLE_DEVICES=1 bash run_eval_all_ents_slurm.sh graphquestions_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' -2.9 50 joint
 ```
 
 Pretrain on Wikipedia, finetuned on WebQSP
 ```console
-bash run_eval_all_ents_slurm.sh WebQSP_EL $split 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;18' joint -1.5 50 joint
+bash run_eval_all_ents_slurm.sh WebQSP_EL $split 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;18' -1.5 50 joint
 
-bash run_eval_all_ents_slurm.sh graphquestions_EL $split 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;18' joint -1.5 50 joint
+bash run_eval_all_ents_slurm.sh graphquestions_EL $split 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;18' -1.5 50 joint
 ```
 
+Run something on CPUs:
 ```console
-srun --gpus-per-node=8 --partition=learnfair --time=3000 --cpus-per-task 80 --pty -l bash run_eval_all_ents_slurm.sh nq ${split} 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear' joint -4.5 50 joint 16
+srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_all_ents_slurm.sh nq ${split} 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear' -4.5 50 joint 16
 ```
 
 For Wiki-trained, best threshold is -2.9 for WebQSP/graphquestions, -3.5 for AIDA-YAGO.
 For finetuned on WebQSP, best threshold is -1.5 for WebQSP, -0.9 for graphquestions,
 
-The following table summarizes the performance of BLINK for the considered datasets. (Weak matching)
+The following table summarizes the performance of BLINK for the considered datasets. (Weak matching for WebQSP/GraphQuestions, strong matching for AIDA-YAGO)
 
-model | dataset | biencoder precision | biencoder recall | biencoder F1 | runtime (s), bsz=64 |
+model | dataset | biencoder precision | biencoder recall | biencoder F1 | runtime (s), bsz=64, bsz=1 (1CPU), bsz=1 (80CPU) |
 ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
 WebQSP train | WebQSP test | 0.8999 | 0.8498 | 0.8741 | 183.4 |
-WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
 Wiki train (e15) | WebQSP test | 0.8578 | 0.8254 | 0.8413 | ? |
-Wiki train (e15) | GraphQuestions test | 0.6959 | 0.6975 | 0.6967 | ? |
-Wiki train (e23) | AIDA-YAGO2 test(?) | 0.7424 | 0.7303 | 0.7363 | ? |
 Pretrain Wiki, Finetune WebQSP | WebQSP test | 0.9170 | 0.8788 | 0.8975 | ? |
+Pretrain Wiki, Finetune WebQSP (HNSW index) | WebQSP test | 0.9098 | 0.8704 | 0.8897 | 26.43, 2429.3, 328.1 |
+WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
+Wiki train (e15) | GraphQuestions test | 0.6959 | 0.6975 | 0.6967 | ? |
 Pretrain Wiki, Finetune WebQSP | GraphQuestions test | 0.7533 | 0.6686 | 0.7084 | ? |
+Pretrain Wiki, Finetune WebQSP (HNSW index) | GraphQuestions test | 0.6871 | 0.7070 | 0.6969 | 37.17, 3065.7, 410.2 |
+Wiki train (e23) | AIDA-YAGO2 test(?) | 0.7069 | 0.6952 | 0.7010 | ? |
 
 TODO: make training adversarial selection stricter?
 
