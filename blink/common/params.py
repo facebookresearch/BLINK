@@ -318,6 +318,13 @@ class BlinkParser(argparse.ArgumentParser):
             help="Filepath to the last checkpoint's training state to load.",
         )
         parser.add_argument(
+            "--index_path",
+            default="models/faiss_hnsw_index.pkl",
+            type=str,
+            required=False,
+            help="Filepath to the HNSW index for adversarial training.",
+        )
+        parser.add_argument(
             "--adversarial_training",
             default=False,
             action="store_true",

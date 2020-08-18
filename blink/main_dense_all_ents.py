@@ -517,8 +517,6 @@ def get_predictions(
             elif args.threshold_type == "top_entity_by_mention":
                 top_mentions_mask = (mention_scores[i] > mention_threshold)
             elif args.threshold_type == "thresholded_entity_by_mention":
-                import pdb
-                pdb.set_trace()
                 top_mentions_mask = (distances[:,0] > threshold) & (mention_scores[i] > mention_threshold)
     
             _, sort_idxs = torch.tensor(distances[:,0][top_mentions_mask]).sort(descending=True)

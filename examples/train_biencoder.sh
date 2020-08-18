@@ -120,7 +120,7 @@ fi
 
 if [ "${adversarial}" = "true" ]
 then
-  cand_enc_args="--adversarial_training ${cand_enc_args}"
+  cand_enc_args="--adversarial_training ${cand_enc_args} --index_path models/faiss_hnsw_index.pkl"
 fi
 
 if [ "${objective}" = "" ]

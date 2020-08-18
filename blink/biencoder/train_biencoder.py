@@ -38,6 +38,7 @@ from blink.biencoder.data_process import process_mention_data
 from blink.biencoder.zeshel_utils import DOC_PATH, WORLDS, world_to_id
 from blink.common.optimizer import get_bert_optimizer
 from blink.common.params import BlinkParser
+from blink.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer, DenseIVFFlatIndexer
 
 
 logger = None
@@ -107,7 +108,7 @@ def evaluate(
                         pred_mention_idx_mask = mention_idx_mask
                     flattened_embedding_contexts = embedding_context[pred_mention_idx_mask]
                     # do faiss search for closest entity
-                    D, I = faiss_index.search(flattened_embedding_contexts.contiguous().detach().cpu().numpy(), 1)
+                    D, I = faiss_index.search_knn(flattened_embedding_contexts.contiguous().detach().cpu().numpy(), 1)
                     I = I.flatten()
                     I_reshape = -np.ones(embedding_context.shape[:2], dtype=I.dtype)
                     try:
@@ -241,8 +242,6 @@ def main(params):
     tokenizer = reranker.tokenizer
     model = reranker.model
 
-    # utils.save_model(model, tokenizer, model_output_path)
-
     device = reranker.device
     n_gpu = reranker.n_gpu
 
@@ -273,32 +272,7 @@ def main(params):
     # Load train data
     train_samples = utils.read_dataset("train", params["data_path"])
     logger.info("Read %d train samples." % len(train_samples))
-    # samples_per_split = 500000  # TODO don't hardcode
-    # num_splits = len(train_samples) // samples_per_split
-    # tokenized_contexts_dir = os.path.join(params["data_path"], "cache")
-    # if params['end_idx'] == -1: params['end_idx'] = num_splits
-    # train_tensor_data_tuple = []
-    # for train_split in tqdm(range(params['start_idx'], params['end_idx'])):
-    #     if train_split == (num_splits - 1):
-    #         train_subsamples = train_samples[train_split * samples_per_split:]
-    #     train_subsamples = train_samples[(train_split * samples_per_split):((train_split + 1) * samples_per_split)]
-    #     candidate_token_ids = extra_ret_values.get("candidate_token_ids")
-    #     entity2id = extra_ret_values.get("entity2id")
-    #     try:
-    #         if len(train_tensor_data_tuple) == 0:
-    #             for f in range(len(sub_train_tensor_data_tuple)):
-    #                 train_tensor_data_tuple.append([sub_train_tensor_data_tuple[f]])
-    #         else:
-    #             assert len(train_tensor_data_tuple) == len(sub_train_tensor_data_tuple)
-    #             for f in range(len(train_tensor_data_tuple)):
-    #                 train_tensor_data_tuple[f].append(sub_train_tensor_data_tuple[f])
-    #     except:
-    #         import pdb
-    #         pdb.set_trace()
     logger.info("Finished reading all train samples")
-    # for f in range(len(train_tensor_data_tuple)):
-    #     train_tensor_data_tuple[f] = torch.cat(train_tensor_data_tuple[f])
-    # logger.info("Finished concatenating samples")
 
     # Load eval data
     # TODO: reduce duplicated code here
@@ -330,45 +304,24 @@ def main(params):
 
     # load candidate encodings
     cand_encs = None
-    cand_encs_flat_index = None
+    cand_encs_index = None
     if params["freeze_cand_enc"]:
         cand_encs = torch.load(params['cand_enc_path'])  # TODO DONT HARDCODE THESE PATHS
-        cand_encs_npy = cand_encs.numpy()
         logger.info("Loaded saved entity encodings")
         if params["debug"]:
             cand_encs = cand_encs[:200]
-            cand_encs_npy = cand_encs_npy[:200]
         
         # build FAISS index
-        d = cand_encs_npy.shape[1]
-        nsplits = 100
-        cand_encs_flat_index = faiss.IndexFlatIP(d)
-        cand_encs_quantizer = faiss.IndexFlatIP(d)
-        assert cand_encs_quantizer.is_trained
-        cand_encs_index = faiss.IndexIVFFlat(cand_encs_quantizer, d, nsplits, faiss.METRIC_INNER_PRODUCT)
-        assert not cand_encs_index.is_trained
-        cand_encs_index.train(cand_encs_npy)  # 15s
-        assert cand_encs_index.is_trained
-        cand_encs_index.add(cand_encs_npy)  # 41s
-        cand_encs_flat_index.add(cand_encs_npy)
-        assert cand_encs_index.ntotal == cand_encs_npy.shape[0]
-        assert cand_encs_flat_index.ntotal == cand_encs_npy.shape[0]
-        cand_encs_index.nprobe = 20
-        logger.info("Built and trained FAISS index on entity encodings")
+        cand_encs_index = DenseHNSWFlatIndexer(1)
+        cand_encs_index.deserialize_from(params['index_path'])
+        logger.info("Loaded FAISS index on entity encodings")
         num_neighbors = 10
 
     # evaluate before training
-    # results = evaluate(
-    #     reranker, valid_dataloader, params,
-    #     cand_encs=cand_encs, device=device,
-    #     logger=logger, faiss_index=cand_encs_flat_index,
-    #     joint_mention_detection=True,
-    # )
-    logger.info("Non-end2end")
     results = evaluate(
         reranker, valid_dataloader, params,
         cand_encs=cand_encs, device=device,
-        logger=logger, faiss_index=cand_encs_flat_index,
+        logger=logger, faiss_index=cand_encs_index,
         joint_mention_detection=False,
     )
 
@@ -486,7 +439,6 @@ def main(params):
             mention_bounds = None
             all_inputs_mask = mention_idx_mask
             if params["adversarial_training"]:
-                cand_encs_index.nprobe = 20
                 assert cand_encs is not None and label_ids is not None  # due to params["freeze_cand_enc"] being set
                 # TODO GET CLOSEST N CANDIDATES HERE (AND APPROPRIATE LABELS)...
                 # (bs, num_spans, embed_size)
@@ -505,7 +457,7 @@ def main(params):
                 masked_mention_reps = mention_reps.reshape(-1, mention_reps.size(2))[mention_idx_mask.flatten()]
 
                 # neg_cand_encs_input_idxs: (bs * num_spans [masked], num_negatives)
-                _, neg_cand_encs_input_idxs = cand_encs_index.search(masked_mention_reps.detach().cpu().numpy(), num_neighbors)
+                _, neg_cand_encs_input_idxs = cand_encs_index.search_knn(masked_mention_reps.detach().cpu().numpy(), num_neighbors)
                 neg_cand_encs_input_idxs = torch.from_numpy(neg_cand_encs_input_idxs)
                 # set "correct" closest entities to -1
                 # masked_label_ids: (bs * num_spans [masked])
@@ -570,7 +522,7 @@ def main(params):
                 all_inputs_mask=all_inputs_mask,
             )
             if params["debug"] and params["adversarial_training"]:
-                D, _ = cand_encs_index.search(mention_reps.detach().cpu().numpy(), num_neighbors)
+                D, _ = cand_encs_index.search_knn(mention_reps.detach().cpu().numpy(), num_neighbors)
                 D = torch.tensor(D)
                 D = D.flatten()[mask]
                 _, scores = reranker(
@@ -621,7 +573,7 @@ def main(params):
                 evaluate(
                     reranker, valid_dataloader, params,
                     cand_encs=cand_encs, device=device,
-                    logger=logger, faiss_index=cand_encs_flat_index,
+                    logger=logger, faiss_index=cand_encs_index,
                     joint_mention_detection=False,
                     get_losses=params["get_losses"],
                 )
@@ -643,14 +595,14 @@ def main(params):
         # results = evaluate(
         #     reranker, valid_dataloader, params,
         #     cand_encs=cand_encs, device=device,
-        #     logger=logger, faiss_index=cand_encs_flat_index,
+        #     logger=logger, faiss_index=cand_encs_index,
         #     get_losses=params["get_losses"],
         # )
         logger.info("Valid data evaluation -- non-end2end")
         results = evaluate(
             reranker, valid_dataloader, params,
             cand_encs=cand_encs, device=device,
-            logger=logger, faiss_index=cand_encs_flat_index,
+            logger=logger, faiss_index=cand_encs_index,
             joint_mention_detection=False,
             get_losses=params["get_losses"],
         )
@@ -658,7 +610,7 @@ def main(params):
         results = evaluate(
             reranker, train_dataloader, params,
             cand_encs=cand_encs, device=device,
-            logger=logger, faiss_index=cand_encs_flat_index,
+            logger=logger, faiss_index=cand_encs_index,
             joint_mention_detection=False,
             get_losses=params["get_losses"],
         )
@@ -686,7 +638,7 @@ def main(params):
 
     if params["evaluate"]:
         params["path_to_model"] = model_output_path
-        evaluate(params, cand_encs=cand_encs, logger=logger, faiss_index=cand_encs_flat_index, joint_mention_detection=False)
+        evaluate(params, cand_encs=cand_encs, logger=logger, faiss_index=cand_encs_index, joint_mention_detection=False)
 
 
 if __name__ == "__main__":

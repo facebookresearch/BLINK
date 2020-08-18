@@ -39,7 +39,6 @@ def filter_repeats(pred_triples, pred_scores):
     score_sort_ids = sorted(enumerate(pred_scores), key=lambda x: x[1], reverse=True)
     pred_triples = [pred_triples[si[0]] for si in score_sort_ids]
     pred_scores = [score_sort_id[1] for score_sort_id in score_sort_ids]
-
     all_pred_entities = {}
     all_pred_entities_pruned = []
     all_pred_scores_pruned = []
@@ -135,7 +134,7 @@ if model_type == "wiki":
 elif model_type == "finetuned_webqsp":
     model= '{0}_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;18'.format(model_type)
 
-get_topk_cands = False
+get_topk_cands = True
 topk = 100
 if get_topk_cands:
     threshold=-float("inf")
@@ -146,117 +145,113 @@ else:
     threshold=-5
 
 for data in ["nq", "WebQuestions", "triviaqa"]:
+    # TODO UNCOMMENT
     if data == "nq":
-        splits = ["dev", "test", "train0", "train1", "train2"]
+        splits = ["train0", "train1", "train2", "dev", "test"]
     else:
         splits = ["train", "dev", "test"]
     for split in splits:
-
-f1s = []
-for threshold in [-0.8, -0.9, -1, -1.1, -1.2]:
-(
-    examples, biencoder_indices, biencoder_dists,
-    cand_dists, pred_mention_bounds, mention_dists
-) = load_dists(all_save_dir, data, split, model, "0.0" if model_type == "wiki" else "-inf")
-new_examples = []
-num_correct=0
-num_predicted=0
-num_gold=0
-for i, example in enumerate(tqdm(examples)):
-    # select valid candidates
-    valid_cands_mask = (biencoder_dists[i][:,0] != -1) & (biencoder_dists[i][:,0] == biencoder_dists[i][:,0])
-    # get scores and masking/sorting by score
-    scores_mask, sorted_idxs, sorted_filtered_scores = get_threshold_mask_and_sort(
-        mention_dists[i], cand_dists[i], biencoder_dists[i], valid_cands_mask, threshold, top_mention_sort=(not get_topk_cands)
-    )
-    if get_topk_cands:
-        # (filtered_examples, #cands, 2)
-        ex_pred_mention_bounds = np.repeat(np.expand_dims(pred_mention_bounds[i], axis=1), biencoder_indices[i].shape[1], axis=1)
-        # (filtered_examples, #cands,)
-        ex_mention_dists = np.repeat(np.expand_dims(mention_dists[i], axis=1), biencoder_indices[i].shape[1], axis=1)
-        ex_biencoder_indices = biencoder_indices[i]
-        ex_cand_dists = cand_dists[i]
-    else:
-        ex_pred_mention_bounds = pred_mention_bounds[i]
-        ex_mention_dists = mention_dists[i]
-        ex_biencoder_indices = biencoder_indices[i]  #[:,0]
-        ex_cand_dists = cand_dists[i]  #[:,0]
-    # output threshold_entities_translate, pred_triples, pred_scores
-    threshold_entities = ex_biencoder_indices[valid_cands_mask][scores_mask][sorted_idxs]  # (filtered_exs, #cands) / (filtered_cands,)
-    threshold_mention_bounds = ex_pred_mention_bounds[valid_cands_mask][scores_mask][sorted_idxs]  # (filtered_exs, 2) / (filtered_cands, 2)
-    threshold_cand_scores = ex_cand_dists[valid_cands_mask][scores_mask][sorted_idxs]  # (filtered_exs, #cands) / (filtered_cands,)
-    threshold_mention_scores = ex_mention_dists[valid_cands_mask][scores_mask][sorted_idxs]  # (filtered_exs,) / (filtered_cands,)
-    threshold_scores = sorted_filtered_scores  # (filtered_exs, #cands) / (filtered_cands,)
-    threshold_entities_translate = {}
-    pred_triples = []
-    pred_scores = []
-    example['tokens'] = [101] + example['tokens'] + [102]
-    for m in range(len(threshold_scores)):
-        mb = threshold_mention_bounds[m].tolist()
-        mention_text = tokenizer.decode(example['tokens'][mb[0]:mb[1]+1])
-        threshold_entities_translate[mention_text] = {
-            "mention_idx": m, "mention_score": float(threshold_mention_scores[m])
-        }
-        if len(threshold_entities[m].shape) > 0:
-            pred_triples.append([str(threshold_entities[m][0]), mb[0], mb[1]+1])
-            pred_scores.append(float(threshold_scores[m][0]))
-            threshold_entities_translate[mention_text]["candidate_entities"] = []
-            threshold_entities_translate[mention_text]["cand_scores"] = threshold_cand_scores[m].tolist()
-            for id in threshold_entities[m]:
-                threshold_entities_translate[mention_text]["candidate_entities"].append(id2title[str(id)])
-        else:
-            pred_triples.append([str(threshold_entities[m]), mb[0], mb[1]+1])
-            pred_scores.append(float(threshold_scores[m]))
-            threshold_entities_translate[mention_text]["candidate_entities"] = id2title[str(threshold_entities[m])]
-            threshold_entities_translate[mention_text]["cand_scores"] = float(threshold_cand_scores[m])
-    new_ex = {
-        "id": example["id"],
-        "text": example["text"],
-        "tokens": example["tokens"],
-    }
-    if "gold_triples" in example:
-        all_pred_entities_pruned = pred_triples
-        all_pred_scores_pruned = pred_scores
-        if get_topk_cands:
-            all_pred_entities_pruned, all_pred_scores_pruned = filter_repeats(pred_triples, pred_scores)
-            all_pred_entities_pruned = all_pred_entities_pruned[:topk]
-            all_pred_scores_pruned = all_pred_scores_pruned[:topk]
-        else:
-            all_pred_entities_pruned, all_pred_scores_pruned = filter_overlaps(example["tokens"], pred_triples, pred_scores)
-    else:
-        all_pred_entities_pruned = pred_triples
-        all_pred_scores_pruned = pred_scores
-        if get_topk_cands:
-            all_pred_entities_pruned, all_pred_scores_pruned = filter_repeats(pred_triples, pred_scores)
-            all_pred_entities_pruned = all_pred_entities_pruned[:topk]
-            all_pred_scores_pruned = all_pred_scores_pruned[:topk]
-        else:
-            all_pred_entities_pruned, all_pred_scores_pruned = filter_overlaps(example["tokens"], pred_triples, pred_scores)
-    new_ex['pred_mentions'] = threshold_entities_translate
-    new_ex['pred_triples'] = [[triple[0], triple[1]-1, triple[2]-1] for triple in all_pred_entities_pruned]
-    new_ex['pred_triples_score'] = all_pred_scores_pruned
-    new_ex['pred_triples_string'] = [
-        [id2title[triple[0]], tokenizer.decode(example['tokens'][triple[1]:triple[2]])]
-        for triple in all_pred_entities_pruned
-    ]
-    # get scores
-    if "gold_triples" in example:
-        gold_triples = example["gold_triples"]
-        new_ex["gold_triples"] = gold_triples
-        num_overlap_weak, num_overlap_strong = entity_linking_tp_with_overlap(gold_triples, new_ex['pred_triples'])
-        num_correct += num_overlap_weak
-        num_predicted += len(all_pred_entities_pruned)
-        num_gold += len(gold_triples)
-    new_examples.append(new_ex)
-
-# compute metrics
-if num_predicted > 0 and num_gold > 0:
-    p = num_correct / num_predicted
-    r = num_correct / num_gold
-    f1 = 2*p*r / (p+r)
-    print(f1)
-    f1s.append(f1)
-
+        (
+            examples, biencoder_indices, biencoder_dists,
+            cand_dists, pred_mention_bounds, mention_dists
+        ) = load_dists(all_save_dir, data, split, model, "0.0" if model_type == "wiki" else "-inf")
+        new_examples = []
+        num_correct=0
+        num_predicted=0
+        num_gold=0
+        for i, example in enumerate(tqdm(examples)):
+            # select valid candidates
+            valid_cands_mask = (biencoder_dists[i][:,0] != -1) & (biencoder_dists[i][:,0] == biencoder_dists[i][:,0])
+            # get scores and masking/sorting by score
+            scores_mask, sorted_idxs, sorted_filtered_scores = get_threshold_mask_and_sort(
+                mention_dists[i], cand_dists[i], biencoder_dists[i], valid_cands_mask, threshold, top_mention_sort=(not get_topk_cands)
+            )
+            if get_topk_cands:
+                # (filtered_examples, #cands, 2)
+                ex_pred_mention_bounds = np.repeat(np.expand_dims(pred_mention_bounds[i], axis=1), biencoder_indices[i].shape[1], axis=1)
+                # (filtered_examples, #cands,)
+                ex_mention_dists = np.repeat(np.expand_dims(mention_dists[i], axis=1), biencoder_indices[i].shape[1], axis=1)
+                ex_biencoder_indices = biencoder_indices[i]
+                ex_cand_dists = cand_dists[i]
+            else:
+                ex_pred_mention_bounds = pred_mention_bounds[i]
+                ex_mention_dists = mention_dists[i]
+                ex_biencoder_indices = biencoder_indices[i]  #[:,0]
+                ex_cand_dists = cand_dists[i]  #[:,0]
+            # output threshold_entities_translate, pred_triples, pred_scores
+            threshold_entities = ex_biencoder_indices[valid_cands_mask][scores_mask][sorted_idxs]  # (filtered_exs, #cands) / (filtered_cands,)
+            threshold_mention_bounds = ex_pred_mention_bounds[valid_cands_mask][scores_mask][sorted_idxs]  # (filtered_exs, 2) / (filtered_cands, 2)
+            threshold_cand_scores = ex_cand_dists[valid_cands_mask][scores_mask][sorted_idxs]  # (filtered_exs, #cands) / (filtered_cands,)
+            threshold_mention_scores = ex_mention_dists[valid_cands_mask][scores_mask][sorted_idxs]  # (filtered_exs,) / (filtered_cands,)
+            threshold_scores = sorted_filtered_scores  # (filtered_exs, #cands) / (filtered_cands,)
+            threshold_entities_translate = {}
+            pred_triples = []
+            pred_scores = []
+            example['tokens'] = [101] + example['tokens'] + [102]
+            for m in range(len(threshold_scores)):
+                mb = threshold_mention_bounds[m].tolist()
+                mention_text = tokenizer.decode(example['tokens'][mb[0]:mb[1]+1])
+                threshold_entities_translate[mention_text] = {
+                    "mention_idx": m, "mention_score": float(threshold_mention_scores[m])
+                }
+                if len(threshold_entities[m].shape) > 0:
+                    pred_triples.append([str(threshold_entities[m][0]), mb[0], mb[1]+1])
+                    pred_scores.append(float(threshold_scores[m][0]))
+                    threshold_entities_translate[mention_text]["candidate_entities"] = []
+                    threshold_entities_translate[mention_text]["cand_scores"] = threshold_cand_scores[m].tolist()
+                    for id in threshold_entities[m]:
+                        threshold_entities_translate[mention_text]["candidate_entities"].append(id2title[str(id)])
+                else:
+                    pred_triples.append([str(threshold_entities[m]), mb[0], mb[1]+1])
+                    pred_scores.append(float(threshold_scores[m]))
+                    threshold_entities_translate[mention_text]["candidate_entities"] = id2title[str(threshold_entities[m])]
+                    threshold_entities_translate[mention_text]["cand_scores"] = float(threshold_cand_scores[m])
+            new_ex = {
+                "id": example["id"],
+                "text": example["text"],
+                "tokens": example["tokens"],
+            }
+            if "gold_triples" in example:
+                all_pred_entities_pruned = pred_triples
+                all_pred_scores_pruned = pred_scores
+                if get_topk_cands:
+                    all_pred_entities_pruned, all_pred_scores_pruned = filter_repeats(pred_triples, pred_scores)
+                    all_pred_entities_pruned = all_pred_entities_pruned[:topk]
+                    all_pred_scores_pruned = all_pred_scores_pruned[:topk]
+                else:
+                    all_pred_entities_pruned, all_pred_scores_pruned = filter_overlaps(example["tokens"], pred_triples, pred_scores)
+            else:
+                all_pred_entities_pruned = pred_triples
+                all_pred_scores_pruned = pred_scores
+                if get_topk_cands:
+                    all_pred_entities_pruned, all_pred_scores_pruned = filter_repeats(pred_triples, pred_scores)
+                    all_pred_entities_pruned = all_pred_entities_pruned[:topk]
+                    all_pred_scores_pruned = all_pred_scores_pruned[:topk]
+                else:
+                    all_pred_entities_pruned, all_pred_scores_pruned = filter_overlaps(example["tokens"], pred_triples, pred_scores)
+            new_ex['pred_mentions'] = threshold_entities_translate
+            new_ex['pred_triples'] = [[triple[0], triple[1]-1, triple[2]-1] for triple in all_pred_entities_pruned]
+            new_ex['pred_triples_score'] = all_pred_scores_pruned
+            new_ex['pred_triples_string'] = [
+                [id2title[triple[0]], tokenizer.decode(example['tokens'][triple[1]:triple[2]])]
+                for triple in all_pred_entities_pruned
+            ]
+            # get scores
+            if "gold_triples" in example:
+                gold_triples = example["gold_triples"]
+                new_ex["gold_triples"] = gold_triples
+                num_overlap_weak, num_overlap_strong = entity_linking_tp_with_overlap(gold_triples, new_ex['pred_triples'])
+                num_correct += num_overlap_weak
+                num_predicted += len(all_pred_entities_pruned)
+                num_gold += len(gold_triples)
+            new_examples.append(new_ex)
+        # compute metrics
+        if num_predicted > 0 and num_gold > 0:
+            p = num_correct / num_predicted
+            r = num_correct / num_gold
+            f1 = 2*p*r / (p+r)
+            print(f1)
+            f1s.append(f1)
         if get_topk_cands:
             print("Saving {} {} {}".format(data, split, str(topk)))
             save_file = "{}_{}_top{}.jsonl".format(split, model_type, str(topk))
