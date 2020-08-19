@@ -92,7 +92,6 @@ def evaluate(
                 mention_idxs = batch[-2]
             mention_idx_mask = batch[-1].clone()
 
-            # MEMORY WASTING EVALUATION :/
             if params["freeze_cand_enc"]:
                 # get mention encoding
                 embedding_context, mention_logits, mention_bounds = reranker.encode_context(
