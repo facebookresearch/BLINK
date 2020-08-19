@@ -195,6 +195,13 @@ class BlinkParser(argparse.ArgumentParser):
             type=str,
             help="Method for generating/scoring mentions boundaries (options: 'qa_mlp', 'qa_linear', 'BIO')",
         )
+        parser.add_argument(
+            "--max_mention_length",
+            dest="max_mention_length",
+            default=10,
+            type=int,
+            help="Maximum length of span to consider as candidate mention",
+        )
 
     def add_training_args(self, args=None):
         """

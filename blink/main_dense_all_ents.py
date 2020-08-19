@@ -274,7 +274,7 @@ def _batch_reshape_mask_left(
 
 def _run_biencoder(
     args, biencoder, dataloader, candidate_encoding, samples,
-    num_cand_mentions=100, num_cand_entities=10,  # TODO don't hardcode
+    num_cand_mentions=50, num_cand_entities=10,
     device="cpu", sample_to_all_context_inputs=None,
     threshold=0.0, indexer=None,
 ):
@@ -327,10 +327,6 @@ def _run_biencoder(
 
             '''
             PRUNE MENTIONS BASED ON SCORES (for each instance in batch, num_cand_mentions (>= -inf) OR THRESHOLD)
-            '''
-            '''
-            topK_mention_scores, mention_pos = torch.cat([torch.arange(), mention_logits.topk(num_cand_mentions, dim=1)])
-            mention_pos = mention_pos.flatten()
             '''
             # DIM (num_total_mentions, embed_dim)
             # (bsz, num_cand_mentions); (bsz, num_cand_mentions)
@@ -436,12 +432,8 @@ def _run_biencoder(
             '''
     
             for idx in range(len(batch[0])):
-                # TODO do with masking....!!!
                 # [(seqlen) x exs] <= (bsz, seqlen)
                 context_inputs.append(context_input[idx][mask_ctxt[idx]].data.cpu().numpy())
-                if len(top_cand_indices[idx][top_cand_indices[idx] < 0]) > 0:
-                    import pdb
-                    pdb.set_trace()
                 # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
                 nns.append(top_cand_indices[idx][left_align_mask[idx]].data.cpu().numpy())
                 # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
