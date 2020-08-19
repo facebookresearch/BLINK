@@ -16,12 +16,16 @@ DST_DIR="$ROOT_DIR/models"
 mkdir -p "$DST_DIR"
 cd "$DST_DIR"
 
-if [[ ! -f biencoder_wiki_large.bin ]]; then
-    wget http://dl.fbaipublicfiles.com/BLINK/biencoder_wiki_large.bin
+if [[ ! -f elq_wiki_large.bin ]]; then
+    wget http://dl.fbaipublicfiles.com/elq/elq_wiki_large.bin
 fi
 
-if [[ ! -f biencoder_wiki_large.json ]]; then
-    wget http://dl.fbaipublicfiles.com/BLINK/biencoder_wiki_large.json
+if [[ ! -f elq_webqsp_large.bin ]]; then
+    wget http://dl.fbaipublicfiles.com/elq/elq_webqsp_large.bin
+fi
+
+if [[ ! -f elq_large_params.txt ]]; then
+    wget http://dl.fbaipublicfiles.com/elq/elq_large_params.txt
 fi
 
 if [[ ! -f entity.jsonl ]]; then

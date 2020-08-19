@@ -917,6 +917,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--test_entities", dest="test_entities", type=str, help="Test Entities."
+        default="models/entity.jsonl",  # ALL WIKIPEDIA!
     )
 
     parser.add_argument(
@@ -933,7 +934,7 @@ if __name__ == "__main__":
         "--threshold", type=str, default="-4.5",
         dest="threshold",
         help="Threshold for final joint score, for which examples will be pruned if they fall under that threshold. "
-        "Set to '-inf' to get all entities."
+        "Set to `-inf` to get all entities."
     )
     parser.add_argument(
         "--num_cand_mentions", type=int, default=50, help="Number of mention candidates to consider per example (at most)"
@@ -949,29 +950,25 @@ if __name__ == "__main__":
         "`joint`: by thresholding joint score."
     )
 
-
     # biencoder
     parser.add_argument(
         "--biencoder_model",
         dest="biencoder_model",
         type=str,
-        # default="models/biencoder_wiki_large.bin",
-        default="models/biencoder_wiki_large.bin",
+        default="models/elq_wiki_large.bin",
         help="Path to the biencoder model.",
     )
     parser.add_argument(
         "--biencoder_config",
         dest="biencoder_config",
         type=str,
-        # default="models/biencoder_wiki_large.json",
-        default="models/biencoder_wiki_large.json",
+        default="models/elq_large_params.txt",
         help="Path to the biencoder configuration.",
     )
     parser.add_argument(
         "--entity_catalogue",
         dest="entity_catalogue",
         type=str,
-        # default="models/tac_entity.jsonl",  # TAC-KBP
         default="models/entity.jsonl",  # ALL WIKIPEDIA!
         help="Path to the entity catalogue.",
     )
@@ -986,7 +983,6 @@ if __name__ == "__main__":
         "--entity_encoding",
         dest="entity_encoding",
         type=str,
-        # default="models/tac_candidate_encode_large.t7",  # TAC-KBP
         default="models/all_entities_large.t7",  # ALL WIKIPEDIA!
         help="Path to the entity catalogue.",
     )

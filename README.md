@@ -1,16 +1,24 @@
 ## End-to-End Entity Linking
 
-All data is under `/checkpoint/belindali/entity_link/data/*/tokenized`
+All data is under `/checkpoint/belindali/entity_link/data/*/tokenized`. The public link is https://dl.fbaipublicfiles.com/elq/EL4QA_data.tar.gz.
+
+The FAISS indices are under:
+- https://dl.fbaipublicfiles.com/elq/faiss_flat_index.pkl
+- https://dl.fbaipublicfiles.com/elq/faiss_hnsw_index.pkl
+    - Note this differs from HNSW used in BLINK, as it returns inner product score
+You can also create your own FAISS indices by running
+```console
+
+```
 
 **TODO: Release tokenized version of data (alongside original)**
-
 ### Model Architecture
 **TODO cite paper**
 
 ### Setup
 1. Create conda environment and install requirements
-```
-conda create -n blink37 -y python=3.7 && conda activate blink37
+```console
+conda create -n el4qa -y python=3.7 && conda activate el4qa
 pip install -r requirements.txt
 ```
 
@@ -84,9 +92,9 @@ Saves under `models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_
 ### Evaluation
 Zero-shot from Wikipedia
 ```console
-CUDA_VISIBLE_DEVICES=0 bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' -2.9 50 joint
+CUDA_VISIBLE_DEVICES=0 bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;49' -2.9 50 joint
 
-CUDA_VISIBLE_DEVICES=1 bash run_eval_all_ents_slurm.sh graphquestions_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15' -2.9 50 joint
+CUDA_VISIBLE_DEVICES=1 bash run_eval_all_ents_slurm.sh graphquestions_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;49' -2.9 50 joint
 ```
 
 Pretrain on Wikipedia, finetuned on WebQSP
@@ -101,19 +109,21 @@ Run something on CPUs:
 srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_all_ents_slurm.sh nq ${split} 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear' -4.5 50 joint 16
 ```
 
-For Wiki-trained, best threshold is -2.9 for WebQSP/graphquestions, -3.5 for AIDA-YAGO.
+For Wiki-trained, best threshold is `TODO` (-2.9) for WebQSP, `TODO` (-2.9) for graphquestions, -3.5 for AIDA-YAGO.
 For finetuned on WebQSP, best threshold is -1.5 for WebQSP, -0.9 for graphquestions,
+
+Lower thresholds = Predict more candidates = Higher recall/lower precision
 
 The following table summarizes the performance of BLINK for the considered datasets. (Weak matching for WebQSP/GraphQuestions, strong matching for AIDA-YAGO)
 
 model | dataset | biencoder precision | biencoder recall | biencoder F1 | runtime (s), bsz=64, bsz=1 (1CPU), bsz=1 (80CPU) |
 ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
 WebQSP train | WebQSP test | 0.8999 | 0.8498 | 0.8741 | 183.4 |
-Wiki train (e15) | WebQSP test | 0.8578 | 0.8254 | 0.8413 | ? |
+Wiki train (e49; HNSW) | WebQSP test | 0.8607 | 0.8181 | 0.8389 | 33.53 |
 Pretrain Wiki, Finetune WebQSP | WebQSP test | 0.9170 | 0.8788 | 0.8975 | ? |
 Pretrain Wiki, Finetune WebQSP (HNSW index) | WebQSP test | 0.9098 | 0.8704 | 0.8897 | 26.43, 2429.3, 328.1 |
 WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
-Wiki train (e15) | GraphQuestions test | 0.6959 | 0.6975 | 0.6967 | ? |
+Wiki train (e49; HNSW) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | 43.32 |
 Pretrain Wiki, Finetune WebQSP | GraphQuestions test | 0.7533 | 0.6686 | 0.7084 | ? |
 Pretrain Wiki, Finetune WebQSP (HNSW index) | GraphQuestions test | 0.6871 | 0.7070 | 0.6969 | 37.17, 3065.7, 410.2 |
 Wiki train (e23) | AIDA-YAGO2 test(?) | 0.7069 | 0.6952 | 0.7010 | ? |

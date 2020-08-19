@@ -46,6 +46,8 @@ entity_encoding=$8  # file for entity encoding
 debug="false"  # "true"/<anything other than "true"> (does debug_cross)
 gpu=$9
 
+output_dir="/checkpoint/${USER}/entity_link/saved_preds"
+
 export PYTHONPATH=.
 
 IFS=';' read -ra MODEL_PARSE <<< "${model_full}"
@@ -146,7 +148,7 @@ command="python blink/main_dense_all_ents.py \
     --entity_encoding ${entity_encoding} \
     --biencoder_model ${biencoder_model} \
     --biencoder_config ${biencoder_config} \
-    --save_preds_dir /checkpoint/belindali/entity_link/saved_preds/${test_questions}_${subset}_${model_full}_top${top_k}cands_thresh${threshold}${save_dir_batch} \
+    --save_preds_dir ${output_dir}/${test_questions}_${subset}_${model_full}_top${top_k}cands_thresh${threshold}${save_dir_batch} \
     ${threshold_args} --num_cand_mentions ${top_k} --num_cand_entities 10 \
     --eval_batch_size ${eval_batch_size} ${cuda_args} ${max_context_length_args} \
     --faiss_index hnsw --index_path models/faiss_hnsw_index.pkl"
