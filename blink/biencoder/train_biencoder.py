@@ -96,8 +96,8 @@ def evaluate(
                 # get mention encoding
                 (
                     embedding_context, top_mention_mask,
-                    mention_logits, mention_bounds,
                     top_mention_logits, top_mention_bounds,
+                    mention_logits, mention_bounds,
                 )= reranker.encode_context(
                     context_input, gold_mention_idxs=mention_idxs,
                 )

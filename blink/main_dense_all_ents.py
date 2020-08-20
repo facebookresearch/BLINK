@@ -265,9 +265,10 @@ def _run_biencoder(
     label_ids = None
     for step, batch in enumerate(tqdm(dataloader)):
         context_input = batch[0].to(device)
+        mask_ctxt = context_input != biencoder.NULL_IDX
         with torch.no_grad():
             (
-                embedding_ctxt, left_align_mask, chosen_mention_logits, chosen_mention_bounds,
+                embedding_context, left_align_mask, chosen_mention_logits, chosen_mention_bounds,
                 _, _,
             ) = biencoder.encode_context(
                 context_input, num_cand_mentions=num_cand_mentions, topK_threshold=threshold

@@ -385,8 +385,6 @@ class BiEncoderModule(torch.nn.Module):
         Returns
             torch.FloatTensor (bsz, max_num_pred_mentions, embed_dim)
         """
-        import pdb
-        pdb.set_trace()
         # (bs, max_num_pred_mentions, embed_dim)
         embedding_ctxt = self.classification_heads['get_context_embeds'](raw_ctxt_encoding, mention_bounds)
         if self.linear_compression is not None:
@@ -455,9 +453,11 @@ class BiEncoderModule(torch.nn.Module):
             # for merging dataparallel, only 1st dimension can differ...
             return (
                 embedding_ctxt.view(-1, embedding_ctxt.size(-1)),
-                all_mention_mask,
-                mention_logits, mention_bounds,
-                torch.tensor([embedding_ctxt.size(1)]).to(embedding_ctxt.device),
+                top_mention_mask.view(-1),
+                top_mention_logits.view(-1),
+                top_mention_bounds.view(-1, top_mention_bounds.size(-1)),
+                all_mention_mask, mention_logits, mention_bounds,
+                torch.tensor(top_mention_mask.size()).unsqueeze(0).to(embedding_ctxt.device),
             )
 
     def forward_candidate(
@@ -487,14 +487,14 @@ class BiEncoderModule(torch.nn.Module):
         If gold_mention_bounds is set, returns mention embeddings of passed-in mention bounds
         Otherwise, uses top-scoring mentions
         """
-        embedding_ctxt = None
-        all_mention_logits = None
-        all_mention_bounds = None
-        mention_mask = None
-        embedding_cands = None
+        embedding_ctxt = embedding_cands = top_mention_mask = \
+                top_mention_logits = top_mention_bounds = all_mention_mask = \
+                all_mention_logits = all_mention_bounds = max_num_pred_mentions = None
         if token_idx_ctxt is not None:
             (
                 embedding_ctxt, top_mention_mask,
+                top_mention_logits, top_mention_bounds,
+                all_mention_mask,
                 all_mention_logits, all_mention_bounds,
                 max_num_pred_mentions,
             ) = self.forward_ctxt(
@@ -506,8 +506,9 @@ class BiEncoderModule(torch.nn.Module):
                 token_idx_cands, segment_idx_cands, mask_cands
             )
         return (
-            embedding_ctxt, embedding_cands, top_mention_mask,
-            all_mention_logits, all_mention_bounds,
+            embedding_ctxt, embedding_cands,
+            top_mention_mask, top_mention_logits, top_mention_bounds,
+            all_mention_mask, all_mention_logits, all_mention_bounds,
             max_num_pred_mentions,
         )
 
@@ -615,8 +616,11 @@ class BiEncoderRanker(torch.nn.Module):
         )
         (
             embedding_context, _,
+            top_mention_mask,
+            top_mention_logits, top_mention_bounds,
+            mention_mask,
             mention_logits, mention_bounds,
-            mention_pos_mask,
+            top_mention_shape,
         ) = self.model(
             token_idx_cands, segment_idx_cands, mask_cands,
             None, None, None,
@@ -624,19 +628,46 @@ class BiEncoderRanker(torch.nn.Module):
             num_cand_mentions=num_cand_mentions,
             topK_threshold=topK_threshold,
         )
-        # reshape
-        import pdb
-        pdb.set_trace()
-        # (bsz, max_num_pred_mentions, 2)
-        chosen_mention_bounds, chosen_mention_mask = batch_reshape_mask_left(mention_bounds, mention_pos_mask, pad_idx=0)
-        # (bsz, max_num_pred_mentions)
-        chosen_mention_logits, _ = batch_reshape_mask_left(mention_logits, mention_pos_mask, pad_idx=-float("inf"), left_align_mask=chosen_mention_mask)
 
-        #top_mention_mask = top_mention_mask.view(, , -1)
+        '''
+        Reshape to (bs, num_mentions, *), iterating across GPUs
+        '''
+        bs = cands.size(0)
+        cum_device_idx = 0
+        embedding_context_list = []
+        top_mention_mask_list = []
+        top_mention_logits_list = []
+        top_mention_bounds_list = []
+        gpu_max_num_pred_mentions = top_mention_shape[:,1].max()
+        for idx in range(self.n_gpu):
+            # reshape
+            gpu_bs = top_mention_shape[idx, 0]
+            start_idx = top_mention_shape[:idx, 1].sum() * gpu_bs
+            end_idx = top_mention_shape[:(idx + 1), 1].sum() * gpu_bs
+            num_pad = gpu_max_num_pred_mentions-top_mention_shape[idx, 1]
+
+            embedding_context_list.append(F.pad(embedding_context[start_idx:end_idx].view(
+                gpu_bs, -1, embedding_context.size(-1)
+            ), pad=(0, 0, 0, num_pad, 0, 0), value=0))
+            top_mention_mask_list.append(F.pad(top_mention_mask[start_idx:end_idx].view(
+                gpu_bs, -1,
+            ), pad=(0, num_pad, 0, 0), value=False))
+            top_mention_logits_list.append(F.pad(top_mention_logits[start_idx:end_idx].view(
+                gpu_bs, -1,
+            ), pad=(0, num_pad, 0, 0), value=-float("inf")))
+            top_mention_bounds_list.append(F.pad(top_mention_bounds[start_idx:end_idx].view(
+                gpu_bs, -1, top_mention_bounds.size(-1)
+            ), pad=(0, 0, 0, num_pad, 0, 0), value=0))
         # concatenated across 0th dimension
+        # (bsz, max_num_pred_mentions, embed_dim)
+        embedding_context = torch.cat(embedding_context_list)
+        top_mention_mask = torch.cat(top_mention_mask_list)
+        top_mention_logits = torch.cat(top_mention_logits_list)
+        top_mention_bounds = torch.cat(top_mention_bounds_list)
+
         return (
-            embedding_context, chosen_mention_mask,
-            chosen_mention_logits, chosen_mention_bounds,
+            embedding_context, top_mention_mask,
+            top_mention_logits, top_mention_bounds,
             mention_logits, mention_bounds,
         )
 
@@ -644,7 +675,7 @@ class BiEncoderRanker(torch.nn.Module):
         token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
             cands, self.NULL_IDX
         )
-        _, embedding_cands, _, _, _ = self.model(
+        _, embedding_cands, _, _, _, _, _, _, _ = self.model(
             None, None, None,
             token_idx_cands, segment_idx_cands, mask_cands
         )
@@ -728,7 +759,7 @@ class BiEncoderRanker(torch.nn.Module):
             cand_vecs, self.NULL_IDX
         )
         # embedding_cands: (bs * num_gold_mentions, embed_dim)
-        _, embedding_cands, _, _, _ = self.model(
+        _, embedding_cands, _, _, _, _, _, _, _ = self.model(
             None, None, None,
             token_idx_cands, segment_idx_cands, mask_cands
         )
