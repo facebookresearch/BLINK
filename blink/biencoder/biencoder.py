@@ -22,7 +22,8 @@ from pytorch_transformers.tokenization_bert import BertTokenizer
 
 from blink.common.ranker_base import BertEncoder, get_model_obj
 from blink.common.optimizer import get_bert_optimizer
-from blink.common.span_extractors import batched_span_select, batched_index_select
+from blink.biencoder.allennlp_span_utils import batched_span_select, batched_index_select
+from blink.biencoder.utils import batch_reshape_mask_left
 
 
 def load_biencoder(params):
@@ -175,23 +176,23 @@ class GetContextEmbedsHead(nn.Module):
         else:
             self.mention_agg_mlp = None
 
-    def forward(self, bert_output, mention_idxs):
+    def forward(self, bert_output, mention_bounds):
         '''
         bert_output
             (bs, seqlen, embed_dim)
-        mention_idxs: both bounds are inclusive [start, end]
+        mention_bounds: both bounds are inclusive [start, end]
             (bs, num_spans, 2)
         '''
         # get embedding of [CLS] token
-        if mention_idxs.size(0) == 0:
-            return mention_idxs
+        if mention_bounds.size(0) == 0:
+            return mention_bounds
         if self.tokens_to_aggregate == 'all':
             (
                 embedding_ctxt,  # (batch_size, num_spans, max_batch_span_width, embedding_size)
                 mask,  # (batch_size, num_spans, max_batch_span_width)
             ) = batched_span_select(
                 bert_output,  # (batch_size, sequence_length, embedding_size)
-                mention_idxs,  # (batch_size, num_spans, 2)
+                mention_bounds,  # (batch_size, num_spans, 2)
             )
             embedding_ctxt[~mask] = 0  # 0 out masked elements
             # embedding_ctxt = (batch_size, num_spans, max_batch_span_width, embedding_size)
@@ -203,8 +204,8 @@ class GetContextEmbedsHead(nn.Module):
                 # embedding_ctxt = (batch_size, num_spans, output_dim)
         elif self.tokens_to_aggregate == 'fl':
             # assert 
-            start_embeddings = batched_index_select(bert_output, mention_idxs[:,:,0])
-            end_embeddings = batched_index_select(bert_output, mention_idxs[:,:,1])
+            start_embeddings = batched_index_select(bert_output, mention_bounds[:,:,0])
+            end_embeddings = batched_index_select(bert_output, mention_bounds[:,:,1])
             embedding_ctxt = torch.cat([start_embeddings.unsqueeze(2), end_embeddings.unsqueeze(2)], dim=2)
             # embedding_ctxt = (batch_size, num_spans, 2, embedding_size)
             if self.aggregate_method == 'avg':
@@ -267,12 +268,207 @@ class BiEncoderModule(torch.nn.Module):
                 classification_heads_dict['mention_scores'] = MentionScoresHead(
                     ctxt_bert_output_dim,
                     params["mention_scoring_method"],
-                    params["max_mention_length"],
+                    params.get("max_mention_length", 10),
                 )
             self.classification_heads = nn.ModuleDict(classification_heads_dict)
         elif ctxt_bert_output_dim != cand_bert.embeddings.word_embeddings.weight.size(1):
             # mapping to make the output dimensions match for dot-product similarity
             self.linear_compression = nn.Linear(ctxt_bert_output_dim, cand_bert.embeddings.word_embeddings.weight.size(1))
+
+    def get_raw_ctxt_encoding(
+        self,
+        token_idx_ctxt,
+        segment_idx_ctxt,
+        mask_ctxt,
+    ):
+        """
+            Gets raw, shared context embeddings from BERT,
+            to be used by both mention detector and entity linker
+
+        Returns:
+            torch.FloatTensor (bsz, seqlen, embed_dim)
+        """
+        assert self.mention_aggregation_type is not None
+        raw_ctxt_encoding, _, _ = self.context_encoder.bert_model(
+            token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
+        )
+        return raw_ctxt_encoding
+
+    def get_ctxt_mention_scores(
+        self,
+        token_idx_ctxt,
+        segment_idx_ctxt,
+        mask_ctxt,
+        raw_ctxt_encoding = None,
+    ):
+        """
+            Gets mention scores using raw context encodings
+
+        Inputs:
+            raw_ctxt_encoding: torch.FloatTensor (bsz, seqlen, embed_dim)
+        Returns:
+            torch.FloatTensor (bsz, num_total_mentions): mention scores/logits
+            torch.IntTensor (bsz, num_total_mentions): mention boundaries
+        """
+        # (bsz, seqlen, embed_dim)
+        if raw_ctxt_encoding is not None:
+            raw_ctxt_encoding = self.get_raw_ctxt_encoding(
+                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
+            )
+
+        # (num_total_mentions,); (num_total_mentions,)
+        return self.classification_heads['mention_scores'](
+            raw_ctxt_encoding, mask_ctxt,
+        )
+
+    def prune_ctxt_mentions(
+        self,
+        mention_logits,
+        mention_bounds,
+        num_cand_mentions,
+        threshold,
+    ):
+        '''
+            Prunes mentions based on mention scores/logits (by either
+            `threshold` or `num_cand_mentions`, whichever yields less candidates)
+
+        Inputs:
+            mention_logits: torch.FloatTensor (bsz, num_total_mentions)
+            mention_bounds: torch.IntTensor (bsz, num_total_mentions)
+            num_cand_mentions: int
+            threshold: float
+        Returns:
+            torch.FloatTensor(bsz, max_num_pred_mentions): top mention scores/logits
+            torch.IntTensor(bsz, max_num_pred_mentions, 2): top mention boundaries
+            torch.BoolTensor(bsz, max_num_pred_mentions): mask on top mentions
+            torch.BoolTensor(bsz, total_possible_mentions): mask for reshaping from total possible mentions -> max # pred mentions
+        '''
+        # (bsz, num_cand_mentions); (bsz, num_cand_mentions)
+        top_mention_logits, mention_pos = mention_logits.topk(num_cand_mentions, sorted=True)
+        # (bsz, num_cand_mentions, 2)
+        #   [:,:,0]: index of batch
+        #   [:,:,1]: index into top mention in mention_bounds
+        mention_pos = torch.stack([torch.arange(mention_pos.size(0)).to(mention_pos.device).unsqueeze(-1).expand_as(mention_pos), mention_pos], dim=-1)
+        # (bsz, num_cand_mentions)
+        top_mention_pos_mask = torch.sigmoid(top_mention_logits).log() > threshold
+        # (total_possible_mentions, 2)
+        #   tuples of [index of batch, index into mention_bounds] of what mentions to include
+        mention_pos = mention_pos[top_mention_pos_mask | (
+            # 2nd part of OR: if nothing is > threshold, use topK that are > -inf
+            ((top_mention_pos_mask.sum(1) == 0).unsqueeze(-1)) & (top_mention_logits > -float("inf"))
+        )]
+        mention_pos = mention_pos.view(-1, 2)
+        # (bsz, total_possible_mentions)
+        #   mask of possible logits
+        mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
+        mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
+	# (bsz, max_num_pred_mentions, 2)
+        chosen_mention_bounds, chosen_mention_mask = batch_reshape_mask_left(mention_bounds, mention_pos_mask, pad_idx=0)
+        # (bsz, max_num_pred_mentions)
+        chosen_mention_logits, _ = batch_reshape_mask_left(mention_logits, mention_pos_mask, pad_idx=-float("inf"), left_align_mask=chosen_mention_mask)
+        return chosen_mention_logits, chosen_mention_bounds, chosen_mention_mask, mention_pos_mask
+
+    def get_ctxt_embeds(
+        self,
+        raw_ctxt_encoding,
+        mention_bounds,
+    ):
+        """
+            Get candidate scores + embeddings associated with passed-in mention_bounds
+
+        Input
+            raw_ctxt_encoding: torch.FloatTensor (bsz, seqlen, embed_dim)
+                shared embeddings straight from BERT
+            mention_bounds: torch.IntTensor (bsz, max_num_pred_mentions, 2)
+                top mention boundaries
+
+        Returns
+            torch.FloatTensor (bsz, max_num_pred_mentions, embed_dim)
+        """
+        import pdb
+        pdb.set_trace()
+        # (bs, max_num_pred_mentions, embed_dim)
+        embedding_ctxt = self.classification_heads['get_context_embeds'](raw_ctxt_encoding, mention_bounds)
+        if self.linear_compression is not None:
+            embedding_ctxt = self.linear_compression(embedding_ctxt)
+        return embedding_ctxt
+
+    def forward_ctxt(
+        self,
+        token_idx_ctxt,
+        segment_idx_ctxt,
+        mask_ctxt,
+        gold_mention_bounds=None,
+        gold_mention_bound_mask=None,
+        num_cand_mentions=50,
+        topK_threshold=-4.5,
+    ):
+        """
+        If gold_mention_bounds is set, returns mention embeddings of passed-in mention bounds
+        Otherwise, uses top-scoring mentions
+        """
+        if self.mention_aggregation_type is None:
+            '''
+            OLD system: don't do mention aggregation (use tokens around mention)
+            '''
+            embedding_ctxt = self.context_encoder(
+                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
+            )
+            # linear mapping to correct context length
+            if self.linear_compression is not None:
+                embedding_ctxt = self.linear_compression(embedding_ctxt)
+            return embedding_ctxt, None, None, None
+
+        else:
+            '''
+            NEW system: aggregate mention tokens
+            '''
+            # (bs, seqlen, embed_size)
+            raw_ctxt_encoding = self.get_raw_ctxt_encoding(
+                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
+            )
+
+            top_mention_bounds = None
+            top_mention_logits = None
+            if self.do_mention_detection:
+                mention_logits, mention_bounds = self.get_ctxt_mention_scores(
+                    token_idx_ctxt, segment_idx_ctxt, mask_ctxt, raw_ctxt_encoding,
+                )
+                if gold_mention_bounds is None:
+                    (
+                        top_mention_logits, top_mention_bounds, top_mention_mask, all_mention_mask,
+                    ) = self.prune_ctxt_mentions(
+                        mention_logits, mention_bounds, num_cand_mentions, topK_threshold,
+                    )
+
+            if top_mention_bounds is None:
+                # use gold mention
+                top_mention_bounds = gold_mention_bounds
+                top_mention_mask = gold_mention_bound_mask
+
+            assert top_mention_bounds is not None
+
+            # (bs, num_pred_mentions OR num_gold_mentions, embed_size)
+            embedding_ctxt = self.get_ctxt_embeds(
+                raw_ctxt_encoding, top_mention_bounds,
+            )
+            # for merging dataparallel, only 1st dimension can differ...
+            return (
+                embedding_ctxt.view(-1, embedding_ctxt.size(-1)),
+                all_mention_mask,
+                mention_logits, mention_bounds,
+                torch.tensor([embedding_ctxt.size(1)]).to(embedding_ctxt.device),
+            )
+
+    def forward_candidate(
+        self,
+        token_idx_cands,
+        segment_idx_cands,
+        mask_cands,
+    ):
+        return self.cand_encoder(
+            token_idx_cands, segment_idx_cands, mask_cands
+        )
 
     def forward(
         self,
@@ -282,63 +478,38 @@ class BiEncoderModule(torch.nn.Module):
         token_idx_cands,
         segment_idx_cands,
         mask_cands,
-        gold_mention_idxs=None,
-        topK_mention=5,
-        topK_threshold=0.5,
+        gold_mention_bounds=None,
+        gold_mention_bounds_mask=None,
+        num_cand_mentions=50,
+        topK_threshold=-4.5,
     ):
+        """
+        If gold_mention_bounds is set, returns mention embeddings of passed-in mention bounds
+        Otherwise, uses top-scoring mentions
+        """
         embedding_ctxt = None
-        mention_logits = None
-        mention_bounds = None
-        if token_idx_ctxt is not None:
-            # get context encoding
-            if self.mention_aggregation_type is None:
-                # OLD system: don't do mention aggregation (use tokens around mention)
-                embedding_ctxt = self.context_encoder(
-                    token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
-                )
-                # linear mapping to correct context length
-                if self.linear_compression is not None:
-                    embedding_ctxt = self.linear_compression(embedding_ctxt)
-            else:
-                # NEW system: aggregate mention tokens
-                # retrieve mention tokens
-                # (bs, seqlen, embed_size)
-                bert_output, _, _ = self.context_encoder.bert_model(
-                    token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
-                )
-
-                # get start/end logits for scoring/backprop purposes
-                if self.do_mention_detection:
-                    # jointly model mention detection--get start/end logits (for scoring purposes)
-                    # (bs, starts * ends); (bs, starts * ends, 2)
-                    mention_logits, mention_bounds = self.classification_heads['mention_scores'](bert_output, mask_ctxt)
-                    if gold_mention_idxs is None:
-                        # (all_pred_mentions_in_batch, 2) of form: [example idx in batch, idx of mention (in starts * ends)]
-                        mention_pos = (torch.sigmoid(mention_logits).log() >= topK_threshold).nonzero()
-                        # reshape back to (bs, num_pred_mentions) mask
-                        mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
-                        mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
-                        # (bs, num_pred_mentions, 2)
-                        mention_idxs = mention_bounds.clone()
-                        mention_idxs[~mention_pos_mask] = 0
-                    else:
-                        # use gold mention
-                        mention_idxs = gold_mention_idxs
-                else:
-                    # DON'T jointly model mention detection, mention bounds *must* be given
-                    assert gold_mention_idxs is not None
-                    mention_idxs = gold_mention_idxs
-
-                # either (bs, num_TOTAL_mentions (unmasked), embed_size) OR (bs, num_gold_mentions, embed_size)
-                embedding_ctxt = self.classification_heads['get_context_embeds'](bert_output, mention_idxs)
-
+        all_mention_logits = None
+        all_mention_bounds = None
+        mention_mask = None
         embedding_cands = None
+        if token_idx_ctxt is not None:
+            (
+                embedding_ctxt, top_mention_mask,
+                all_mention_logits, all_mention_bounds,
+                max_num_pred_mentions,
+            ) = self.forward_ctxt(
+                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
+                gold_mention_bounds, gold_mention_bounds_mask, num_cand_mentions, topK_threshold,
+            )
         if token_idx_cands is not None:
-            # get candidate encoding
-            embedding_cands = self.cand_encoder(
+            embedding_cands = self.forward_candidate(
                 token_idx_cands, segment_idx_cands, mask_cands
             )
-        return embedding_ctxt, embedding_cands, mention_logits, mention_bounds
+        return (
+            embedding_ctxt, embedding_cands, top_mention_mask,
+            all_mention_logits, all_mention_bounds,
+            max_num_pred_mentions,
+        )
 
     def upgrade_state_dict_named(self, state_dict):
         prefix = ''
@@ -431,31 +602,56 @@ class BiEncoderRanker(torch.nn.Module):
             fp16=self.params.get("fp16"),
         )
  
-    def encode_context(self, cands, gold_mention_idxs=None, topK_mention=5, topK_threshold=0.5):
+    def encode_context(
+        self, cands, gold_mention_bounds=None, gold_mention_bounds_mask=None,
+        num_cand_mentions=50, topK_threshold=-4.5,
+    ):
+        """
+        if gold_mention_bounds specified, selects according to gold_mention_bounds,
+        otherwise selects according to top-scoring mentions
+        """
         token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
             cands, self.NULL_IDX
         )
-        embedding_context, _, mention_logits, mention_bounds = self.model(
-            token_idx_ctxt=token_idx_cands,
-            segment_idx_ctxt=segment_idx_cands, mask_ctxt=mask_cands,
-            token_idx_cands=None, segment_idx_cands=None, mask_cands=None,
-            gold_mention_idxs=gold_mention_idxs, topK_mention=topK_mention,
+        (
+            embedding_context, _,
+            mention_logits, mention_bounds,
+            mention_pos_mask,
+        ) = self.model(
+            token_idx_cands, segment_idx_cands, mask_cands,
+            None, None, None,
+            gold_mention_bounds=gold_mention_bounds,
+            num_cand_mentions=num_cand_mentions,
             topK_threshold=topK_threshold,
         )
+        # reshape
+        import pdb
+        pdb.set_trace()
+        # (bsz, max_num_pred_mentions, 2)
+        chosen_mention_bounds, chosen_mention_mask = batch_reshape_mask_left(mention_bounds, mention_pos_mask, pad_idx=0)
+        # (bsz, max_num_pred_mentions)
+        chosen_mention_logits, _ = batch_reshape_mask_left(mention_logits, mention_pos_mask, pad_idx=-float("inf"), left_align_mask=chosen_mention_mask)
+
+        #top_mention_mask = top_mention_mask.view(, , -1)
         # concatenated across 0th dimension
-        return embedding_context, mention_logits, mention_bounds
+        return (
+            embedding_context, chosen_mention_mask,
+            chosen_mention_logits, chosen_mention_bounds,
+            mention_logits, mention_bounds,
+        )
 
     def encode_candidate(self, cands):
         token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
             cands, self.NULL_IDX
         )
-        _, embedding_cands, _, _ = self.model(
-            None, None, None, token_idx_cands, segment_idx_cands, mask_cands
+        _, embedding_cands, _, _, _ = self.model(
+            None, None, None,
+            token_idx_cands, segment_idx_cands, mask_cands
         )
         return embedding_cands.cpu().detach()
 
     # Score candidates given context input and label input
-    # If cand_encs is provided (pre-computed), cand_ves is ignored
+    # If cand_encs is provided (pre-computed), cand_vecs is ignored
     def score_candidate(
         self,
         text_vecs,
@@ -465,10 +661,10 @@ class BiEncoderRanker(torch.nn.Module):
         mention_logits=None,  # pre-computed mention logits
         mention_bounds=None,
         cand_encs=None,  # pre-computed candidate encoding.
-        gold_mention_idxs=None,
-        gold_mention_idx_mask=None,
+        gold_mention_bounds=None,
+        gold_mention_bound_mask=None,
         all_inputs_mask=None,
-        topK_threshold=0.15,
+        topK_threshold=-4.5,
     ):
         if not random_negs:
             assert all_inputs_mask is not None
@@ -479,17 +675,15 @@ class BiEncoderRanker(torch.nn.Module):
                 hasattr(self.model, 'module') and self.model.module.do_mention_detection
             ))
         ):
-            # Encode contexts first
-            token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(
-                text_vecs, self.NULL_IDX
+            # embedding_ctxt: (bs, num_gold_mentions/num_pred_mentions, embed_size)
+            (
+                embedding_context, top_mention_mask,
+                top_mention_logits, top_mention_bounds,
+                all_mention_logits, all_mention_bounds,
+            ) = self.encode_context(
+                text_vecs, gold_mention_bounds=gold_mention_bounds,
             )
-            # embedding_ctxt: (bs, num_mentions, embed_size) if gold_mention_idxs, else (bs, num_total_mentions, embed_size)
-            embedding_ctxt, _, mention_logits, mention_bounds = self.model(
-                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
-                None, None, None,
-                gold_mention_idxs=gold_mention_idxs,
-            )
-            if gold_mention_idxs is not None:
+            if gold_mention_bounds is not None:
                 # (bs * num_mentions, embed_size)
                 embedding_ctxt = embedding_ctxt.view(-1, embedding_ctxt.size(-1))
         else:
@@ -499,15 +693,15 @@ class BiEncoderRanker(torch.nn.Module):
         # Candidate encoding is given, do not need to re-compute
         # Directly return the score of context encoding and candidate encoding
         if cand_encs is not None:
-            if gold_mention_idxs is not None:
-                if embedding_ctxt.size(1) != gold_mention_idxs.size(1):
+            if gold_mention_bounds is not None:
+                if embedding_ctxt.size(1) != gold_mention_bounds.size(1):
                     # (bs, #_gold_mentions, embed_dim)
                     try:
-                        embedding_ctxt = self.model.module.classification_heads['get_context_embeds'](embedding_ctxt, gold_mention_idxs)
+                        embedding_ctxt = self.model.module.classification_heads['get_context_embeds'](embedding_ctxt, gold_mention_bounds)
                     except:
-                        embedding_ctxt = self.model.classification_heads['get_context_embeds'](embedding_ctxt, gold_mention_idxs)
+                        embedding_ctxt = self.model.classification_heads['get_context_embeds'](embedding_ctxt, gold_mention_bounds)
                 if all_inputs_mask is None:
-                    all_inputs_mask = gold_mention_idx_mask
+                    all_inputs_mask = gold_mention_bound_mask
                 # (bs * num_mentions, embed_size)
                 embedding_ctxt = embedding_ctxt.view(-1, embedding_ctxt.size(-1))[all_inputs_mask.flatten()]
                 # candidates and embedding contexts correspond
@@ -534,23 +728,16 @@ class BiEncoderRanker(torch.nn.Module):
             cand_vecs, self.NULL_IDX
         )
         # embedding_cands: (bs * num_gold_mentions, embed_dim)
-        _, embedding_cands, _, _ = self.model(
+        _, embedding_cands, _, _, _ = self.model(
             None, None, None,
             token_idx_cands, segment_idx_cands, mask_cands
         )
         if random_negs:
-            # if gold_mention_idxs is not None:
+            # if gold_mention_bounds is not None:
             if all_inputs_mask is None:
-                all_inputs_mask = gold_mention_idx_mask
+                all_inputs_mask = gold_mention_bound_mask
             # (bs x num_tot_mentions, embed_size)
             embedding_ctxt = embedding_ctxt.view(-1, embedding_ctxt.size(-1))
-            # if all_inputs_mask is not None:
-            #     # (bs * num_mentions, embed_size)
-            #     embedding_ctxt = embedding_ctxt[all_inputs_mask.flatten()]
-            #     # (bs * num_mentions, )
-            #     embedding_cands = embedding_cands.view(-1, embedding_cands.size(-1))[all_inputs_mask.flatten()]
-            #     # candidates and embedding contexts correspond
-
             # train on random negatives (returns bs*num_mentions x bs*num_mentions of scores)
             all_scores = embedding_ctxt[all_inputs_mask.flatten()].mm(embedding_cands[all_inputs_mask.flatten()].t())
             # scores_mask = all_inputs_mask.flatten() & all_inputs_mask.flatten().unsqueeze(-1)
@@ -573,80 +760,85 @@ class BiEncoderRanker(torch.nn.Module):
         mention_logits=None,  # pre-computed mention logits
         mention_bounds=None,
         label_input=None,
-        gold_mention_idxs=None,
-        gold_mention_idx_mask=None,
+        gold_mention_bounds=None,
+        gold_mention_bound_mask=None,
         all_inputs_mask=None,  # should be non-none if we are using negs
         return_loss=True,
-        # multiple_candidates=False,
     ):
-        # import pdb
-        # pdb.set_trace()
-        # if not multiple_candidates:
-        #     assert gold_mention_idxs.size(1) == 1 
-        # TODO MULTIPLE GOLD MENTIONS / SAMPLE
-        # ONLY CALLED IF WE HAVE the lABELS
         flag = label_input is None
 
         scores, mention_logits, mention_bounds = self.score_candidate(
             context_input, cand_input, random_negs=flag,
-            cand_encs=cand_encs,# if flag else None,
+            cand_encs=cand_encs,
             text_encs=text_encs,
             mention_logits=mention_logits,
             mention_bounds=mention_bounds,
-            gold_mention_idxs=gold_mention_idxs,
-            gold_mention_idx_mask=gold_mention_idx_mask,
+            gold_mention_bounds=gold_mention_bounds,
+            gold_mention_bound_mask=gold_mention_bound_mask,
             all_inputs_mask=all_inputs_mask,
         )
 
         if not return_loss:
             return scores, mention_logits, mention_bounds
 
+        '''
+        COMPUTE MENTION LOSS
+        '''
         span_loss = 0
         if mention_logits is not None and mention_bounds is not None:
             N = context_input.size(0)  # batch size
-            M = gold_mention_idxs.size(1)  # num_mentions per instance (just 1, so far)
+            M = gold_mention_bounds.size(1)  # num_mentions per instance (just 1, so far)
             # 1 value
             span_loss = self.get_span_loss(
-                gold_mention_idxs=gold_mention_idxs, 
-                gold_mention_idx_mask=gold_mention_idx_mask,
+                gold_mention_bounds=gold_mention_bounds, 
+                gold_mention_bound_mask=gold_mention_bound_mask,
                 mention_logits=mention_logits, mention_bounds=mention_bounds,
                 N=N, M=M,
             )
 
-        bs = context_input.size(0)
+        '''
+        COMPUTE EL LOSS
+        '''
         if label_input is None:
+            '''
+            Hard negatives (negatives passed in)
+            '''
             # scores: (bs*num_mentions [filtered], bs*num_mentions [filtered])
             target = torch.LongTensor(torch.arange(scores.size(1)))
             target = target.to(self.device)
             # log P(entity|mention) + log P(mention) = log [P(entity|mention)P(mention)]
             loss = F.cross_entropy(scores, target, reduction="mean") + span_loss
         else:
+            '''
+            Random negatives (use in-batch negatives)
+            '''
             # scores: (bs, num_spans, all_embeds)
             if flag:
-                all_inputs_mask = gold_mention_idx_mask
+                all_inputs_mask = gold_mention_bound_mask
             loss_fct = nn.BCEWithLogitsLoss(reduction="mean")
             # scores: ([masked] bs * num_spans), label_input: ([masked] bs * num_spans)
             label_input = label_input.flatten()[all_inputs_mask.flatten()]
             loss = loss_fct(scores, label_input.float()) + span_loss
+
         return loss, scores
 
     def get_span_loss(
-        self, gold_mention_idxs, gold_mention_idx_mask, mention_logits, mention_bounds, N, M,  # global_step,
+        self, gold_mention_bounds, gold_mention_bound_mask, mention_logits, mention_bounds, N, M,  # global_step,
     ):
         loss_fct = nn.BCEWithLogitsLoss(reduction="mean")
 
-        gold_mention_idxs[~gold_mention_idx_mask] = -1  # ensure don't select masked to score
-        # triples of [ex in batch, mention_idx in gold_mention_idxs, idx in mention_bounds]
-        # use 1st, 2nd to index into gold_mention_idxs, 1st, 3rd to index into mention_bounds
+        gold_mention_bounds[~gold_mention_bound_mask] = -1  # ensure don't select masked to score
+        # triples of [ex in batch, mention_idx in gold_mention_bounds, idx in mention_bounds]
+        # use 1st, 2nd to index into gold_mention_bounds, 1st, 3rd to index into mention_bounds
         gold_mention_pos_idx = ((
-            mention_bounds.unsqueeze(1) - gold_mention_idxs.unsqueeze(2)  # (bs, num_mentions, start_pos * end_pos, 2)
+            mention_bounds.unsqueeze(1) - gold_mention_bounds.unsqueeze(2)  # (bs, num_mentions, start_pos * end_pos, 2)
         ).abs().sum(-1) == 0).nonzero()
         # gold_mention_pos_idx should have 1 entry per masked element
-        # (num_gold_mentions [~gold_mention_idx_mask])
+        # (num_gold_mentions [~gold_mention_bound_mask])
         gold_mention_pos = gold_mention_pos_idx[:,2]
 
         # (bs, total_possible_spans)
-        gold_mention_binary = torch.zeros(mention_logits.size(), dtype=mention_logits.dtype).to(gold_mention_idxs.device)
+        gold_mention_binary = torch.zeros(mention_logits.size(), dtype=mention_logits.dtype).to(gold_mention_bounds.device)
         gold_mention_binary[gold_mention_pos_idx[:,0], gold_mention_pos_idx[:,2]] = 1
 
         # prune masked spans
@@ -661,8 +853,8 @@ class BiEncoderRanker(torch.nn.Module):
 
 
 def to_bert_input(token_idx, null_idx):
-    """ token_idx is a 2D tensor int.
-        return token_idx, segment_idx and mask
+    """
+    token_idx is a 2D tensor int.
     """
     segment_idx = token_idx * 0
     mask = token_idx != null_idx

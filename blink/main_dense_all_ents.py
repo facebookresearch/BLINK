@@ -29,6 +29,7 @@ import blink.candidate_ranking.utils as utils
 import math
 
 from blink.vcg_utils.measures import entity_linking_tp_with_overlap
+from blink.biencoder.utils import batch_reshape_mask_left
 
 import os
 import sys
@@ -232,46 +233,6 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params, logger):
     return dataloader
 
 
-def _batch_reshape_mask_left(
-    input_t, selected, pad_idx=0, left_align_mask=None
-):
-    """
-    Left-aligns all ``selected" values in input_t, which is a batch of examples.
-        - input_t: >=2D tensor (N, M, *)
-        - selected: 2D torch.Bool tensor, 2 dims same size as first 2 dims of `input_t` (N, M) 
-        - pad_idx represents the padding to be used in the output
-        - left_align_mask: if already precomputed, pass the alignment mask in
-    Example:
-        input_t  = [[1,2,3,4],[5,6,7,8]]
-        selected = [[0,1,0,1],[1,1,0,1]]
-        output   = [[2,4,0],[5,6,8]]
-    """
-    batch_num_selected = selected.sum(1)
-    max_num_selected = batch_num_selected.max()
-
-    # (bsz, 2)
-    repeat_freqs = torch.stack([batch_num_selected, max_num_selected - batch_num_selected], dim=-1)
-    # (bsz x 2,)
-    repeat_freqs = repeat_freqs.view(-1)
-
-    if left_align_mask is None:
-        # (bsz, 2)
-        left_align_mask = torch.zeros(input_t.size(0), 2).to(input_t.device).bool()
-        left_align_mask[:,0] = 1
-        # (bsz x 2,): [1,0,1,0,...]
-        left_align_mask = left_align_mask.view(-1)
-        # (bsz x max_num_selected,): [1 xrepeat_freqs[0],0 x(M-repeat_freqs[0]),1 xrepeat_freqs[1],0 x(M-repeat_freqs[1]),...]
-        left_align_mask = left_align_mask.repeat_interleave(repeat_freqs)
-        # (bsz, max_num_selected)
-        left_align_mask = left_align_mask.view(-1, max_num_selected)
-
-    # reshape to (bsz, max_num_selected, *)
-    input_reshape = torch.Tensor(left_align_mask.size() + input_t.size()[2:]).to(input_t.device, input_t.dtype).fill_(pad_idx)
-    input_reshape[left_align_mask] = input_t[selected]
-    # (bsz, max_num_selected, *); (bsz, max_num_selected)
-    return input_reshape, left_align_mask
-
-
 def _run_biencoder(
     args, biencoder, dataloader, candidate_encoding, samples,
     num_cand_mentions=50, num_cand_entities=10,
@@ -303,77 +264,28 @@ def _run_biencoder(
     ctxt_idx = 0
     label_ids = None
     for step, batch in enumerate(tqdm(dataloader)):
-        context_input = batch[0]
+        context_input = batch[0].to(device)
         with torch.no_grad():
-            token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
-            if device != "cpu":
-                token_idx_ctxt = token_idx_ctxt.to(device)
-                segment_idx_ctxt = segment_idx_ctxt.to(device)
-                mask_ctxt = mask_ctxt.to(device)
-            
-            '''
-            PREPARE INPUTS
-            '''
-            # (bsz, seqlen, embed_dim)
-            context_encoding, _, _ = biencoder_model.context_encoder.bert_model(
-                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
+            (
+                embedding_ctxt, left_align_mask, chosen_mention_logits, chosen_mention_bounds,
+                _, _,
+            ) = biencoder.encode_context(
+                context_input, num_cand_mentions=num_cand_mentions, topK_threshold=threshold
             )
 
             '''
-            GET MENTION SCORES
+            GET TOP CANDIDATES PER MENTION
             '''
-            # (num_total_mentions,); (num_total_mentions,)
-            mention_logits, mention_bounds = biencoder_model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
-
-            '''
-            PRUNE MENTIONS BASED ON SCORES (for each instance in batch, num_cand_mentions (>= -inf) OR THRESHOLD)
-            '''
-            # DIM (num_total_mentions, embed_dim)
-            # (bsz, num_cand_mentions); (bsz, num_cand_mentions)
-            top_mention_logits, mention_pos = mention_logits.topk(num_cand_mentions, sorted=True)
-            # 2nd part of OR for if nothing is > 0
-            # DIM (bsz, num_cand_mentions, 2)
-            #   [:,:,0]: index of batch
-            #   [:,:,1]: index into top mention in mention_bounds
-            mention_pos = torch.stack([torch.arange(mention_pos.size(0)).to(mention_pos.device).unsqueeze(-1).expand_as(mention_pos), mention_pos], dim=-1)
-            # DIM (bsz, num_cand_mentions)
-            top_mention_pos_mask = torch.sigmoid(top_mention_logits).log() > threshold
-            # DIM (total_possible_mentions, 2)
-            #   tuples of [index of batch, index into mention_bounds] of what mentions to include
-            mention_pos = mention_pos[top_mention_pos_mask | (
-                # If nothing is > threshold, use topK that are > -inf (2nd part of OR)
-                ((top_mention_pos_mask.sum(1) == 0).unsqueeze(-1)) & (top_mention_logits > -float("inf"))
-            )]  #(mention_pos_2_mask.sum(1) == 0).unsqueeze(-1)]
-            mention_pos = mention_pos.view(-1, 2)  #2297 [45,11]
-            # DIM (bs, total_possible_mentions)
-            #   mask of possible logits
-            mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
-            mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
-            # DIM (bs, max_num_pred_mentions, 2)
-            chosen_mention_bounds, left_align_mask = _batch_reshape_mask_left(mention_bounds, mention_pos_mask, pad_idx=0)
-            # DIM (bs, max_num_pred_mentions)
-            chosen_mention_logits, _ = _batch_reshape_mask_left(mention_logits, mention_pos_mask, pad_idx=-float("inf"), left_align_mask=left_align_mask)
-
-            '''
-            GET CANDIDATE SCORES + TOP CANDIDATES PER MENTION
-            '''
-            # (bs, max_num_pred_mentions, embed_dim)
-            embedding_ctxt = biencoder_model.classification_heads['get_context_embeds'](context_encoding, chosen_mention_bounds)
-            if biencoder_model.linear_compression is not None:
-                embedding_ctxt = biencoder_model.linear_compression(embedding_ctxt)
             # (all_pred_mentions_batch, embed_dim)
-            embedding_ctxt = embedding_ctxt[left_align_mask]
-
+            embedding_ctxt = embedding_context[left_align_mask]
             if indexer is None:
                 try:
-                    # start_time = time.time()
                     if embedding_ctxt.size(0) > 1:
                         embedding_ctxt = embedding_ctxt.squeeze(0)
                     # DIM (all_pred_mentions_batch, all_cand_entities)
                     cand_logits = embedding_ctxt.mm(candidate_encoding.to(device).t())
                     # DIM (all_pred_mentions_batch, num_cand_entities); (all_pred_mentions_batch, num_cand_entities)
                     top_cand_logits_shape, top_cand_indices_shape = cand_logits.topk(num_cand_entities, dim=-1, sorted=True)
-                    # end_time = time.time()
                 except:
                     # for memory savings, go through one chunk of candidates at a time
                     SPLIT_SIZE=1000000
@@ -908,7 +820,7 @@ if __name__ == "__main__":
         "--test_mentions", dest="test_mentions", type=str, help="Test Dataset."
     )
     parser.add_argument(
-        "--test_entities", dest="test_entities", type=str, help="Test Entities."
+        "--test_entities", dest="test_entities", type=str, help="Test Entities.",
         default="models/entity.jsonl",  # ALL WIKIPEDIA!
     )
 

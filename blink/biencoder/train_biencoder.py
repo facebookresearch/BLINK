@@ -94,9 +94,12 @@ def evaluate(
 
             if params["freeze_cand_enc"]:
                 # get mention encoding
-                embedding_context, mention_logits, mention_bounds = reranker.encode_context(
-                    context_input, gold_mention_idxs=mention_idxs, #topK_mention=1,
-                    topK_threshold=0.5,
+                (
+                    embedding_context, top_mention_mask,
+                    mention_logits, mention_bounds,
+                    top_mention_logits, top_mention_bounds,
+                )= reranker.encode_context(
+                    context_input, gold_mention_idxs=mention_idxs,
                 )
                 if embedding_context.size(0) > 0:
                     if mention_idxs is None:
@@ -152,19 +155,6 @@ def evaluate(
                 tmp_num_p = 0.0
                 tmp_num_r = 0.0
                 text_encs = None
-            # '''
-
-            if not joint_mention_detection:
-                loss, _ = reranker(
-                    context_input, candidate_input,
-                    text_encs=text_encs,
-                    gold_mention_idxs=batch[-2],
-                    gold_mention_idx_mask=batch[-1],
-                    return_loss=True,
-                    # all_inputs_mask=batch[-1],
-                )
-            else:
-                loss = 0.0
 
             overall_loss += loss
 
@@ -428,8 +418,6 @@ def main(params):
             mention_idx_mask = batch[-1]
             if params["debug"] and label_ids is not None:
                 label_ids[label_ids > 199] = 199
-            # TODO pass in all candidate encodings, AND label_input
-            #
 
             cand_encs_input = None
             label_input = None
@@ -439,17 +427,18 @@ def main(params):
             all_inputs_mask = mention_idx_mask
             if params["adversarial_training"]:
                 assert cand_encs is not None and label_ids is not None  # due to params["freeze_cand_enc"] being set
-                # TODO GET CLOSEST N CANDIDATES HERE (AND APPROPRIATE LABELS)...
+                '''
+                GET CLOSEST N CANDIDATES (AND APPROPRIATE LABELS)
+                '''
                 # (bs, num_spans, embed_size)
                 pos_cand_encs_input = cand_encs[label_ids.to("cpu")]
                 pos_cand_encs_input[~mention_idx_mask] = 0
-                # # reshape back tensors (extract num_spans dimension)
-                # # (bs, num_spans, embed_size)
-                # pos_cand_encs_input_reconstruct = torch.zeros(label_ids.size(0), label_ids.size(1), pos_cand_encs_input.size(-1), dtype=pos_cand_encs_input.dtype)
-                # pos_cand_encs_input_reconstruct[mention_idx_mask] = pos_cand_encs_input
-                # pos_cand_encs_input = pos_cand_encs_input_reconstruct
 
-                mention_reps, mention_logits, mention_bounds = reranker.encode_context(
+                (
+                    mention_reps, top_mention_mask,
+                    top_mention_logits, top_mention_bounds,
+                    mention_logits, mention_bounds,
+                ) = reranker.encode_context(
                     context_input, gold_mention_idxs=mention_idxs,
                 )
                 # mention_reps: (bs, max_num_spans, embed_size) -> masked_mention_reps: (bs * num_spans [masked], embed_size)
