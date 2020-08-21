@@ -125,7 +125,7 @@ Pretrain Wiki, Finetune WebQSP (HNSW index) | WebQSP test | 0.9098 | 0.8704 | 0.
 WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
 Wiki train (e49; HNSW) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | 43.32 |
 Pretrain Wiki, Finetune WebQSP | GraphQuestions test | 0.7533 | 0.6686 | 0.7084 | ? |
-Pretrain Wiki, Finetune WebQSP (HNSW index) | GraphQuestions test | 0.7450 | 0.6555 | 0.6974 | 52.12 |
+Pretrain Wiki, Finetune WebQSP (HNSW index) | GraphQuestions test | 0.7467 | 0.6641 | 0.7030 | 51.50 |
 Wiki train (e23) | AIDA-YAGO2 test(?) | 0.7069 | 0.6952 | 0.7010 | ? |
 
 TODO: make training adversarial selection stricter?

@@ -632,42 +632,47 @@ class BiEncoderRanker(torch.nn.Module):
         '''
         Reshape to (bs, num_mentions, *), iterating across GPUs
         '''
+        def init_tensor(shape, dtype, init_value):
+            return init_value * torch.ones(
+                shape
+            ).to(dtype=dtype, device=embedding_context.device)
+
         bs = cands.size(0)
-        cum_device_idx = 0
-        embedding_context_list = []
-        top_mention_mask_list = []
-        top_mention_logits_list = []
-        top_mention_bounds_list = []
-        gpu_max_num_pred_mentions = top_mention_shape[:,1].max()
+        n_pred_mentions = top_mention_shape[:,1].max()
+        # (bsz, max_num_pred_mentions, embed_dim)
+        embedding_context_reshape = init_tensor([bs, n_pred_mentions, embedding_context.size(-1)], embedding_context.dtype, 0)
+        # (bsz, max_num_pred_mentions)
+        top_mention_mask_reshape = init_tensor([bs, n_pred_mentions], top_mention_mask.dtype, 0)
+        # (bsz, max_num_pred_mentions)
+        top_mention_logits_reshape = init_tensor([bs, n_pred_mentions], top_mention_logits.dtype, -float("inf"))
+        # (bsz, max_num_pred_mentions, 2)
+        top_mention_bounds_reshape = init_tensor([bs, n_pred_mentions, 2], top_mention_bounds.dtype, 0)
         for idx in range(self.n_gpu):
             # reshape
             gpu_bs = top_mention_shape[idx, 0]
-            start_idx = top_mention_shape[:idx, 1].sum() * gpu_bs
-            end_idx = top_mention_shape[:(idx + 1), 1].sum() * gpu_bs
-            num_pad = gpu_max_num_pred_mentions-top_mention_shape[idx, 1]
+            b_width = top_mention_shape[idx, 1]
 
-            embedding_context_list.append(F.pad(embedding_context[start_idx:end_idx].view(
-                gpu_bs, -1, embedding_context.size(-1)
-            ), pad=(0, 0, 0, num_pad, 0, 0), value=0))
-            top_mention_mask_list.append(F.pad(top_mention_mask[start_idx:end_idx].view(
-                gpu_bs, -1,
-            ), pad=(0, num_pad, 0, 0), value=False))
-            top_mention_logits_list.append(F.pad(top_mention_logits[start_idx:end_idx].view(
-                gpu_bs, -1,
-            ), pad=(0, num_pad, 0, 0), value=-float("inf")))
-            top_mention_bounds_list.append(F.pad(top_mention_bounds[start_idx:end_idx].view(
-                gpu_bs, -1, top_mention_bounds.size(-1)
-            ), pad=(0, 0, 0, num_pad, 0, 0), value=0))
-        # concatenated across 0th dimension
-        # (bsz, max_num_pred_mentions, embed_dim)
-        embedding_context = torch.cat(embedding_context_list)
-        top_mention_mask = torch.cat(top_mention_mask_list)
-        top_mention_logits = torch.cat(top_mention_logits_list)
-        top_mention_bounds = torch.cat(top_mention_bounds_list)
+            start_idx = (top_mention_shape[:idx, 0] * top_mention_shape[:idx, 1]).sum()
+            end_idx = start_idx + b_width * gpu_bs
+
+            s_reshape = top_mention_shape[:idx, 0].sum()
+            e_reshape = s_reshape + gpu_bs
+            try:
+                embedding_context_reshape[s_reshape:e_reshape, :b_width, :] = embedding_context[start_idx:end_idx].view(
+                    gpu_bs, b_width, -1)
+            except:
+                import pdb
+                pdb.set_trace()
+            top_mention_mask_reshape[s_reshape:e_reshape, :b_width] = top_mention_mask[start_idx:end_idx].view(
+                gpu_bs, b_width)
+            top_mention_logits_reshape[s_reshape:e_reshape, :b_width] = top_mention_logits[start_idx:end_idx].view(
+                gpu_bs, b_width)
+            top_mention_bounds_reshape[s_reshape:e_reshape, :b_width, :] = top_mention_bounds[start_idx:end_idx].view(
+                gpu_bs, b_width, -1)
 
         return (
-            embedding_context, top_mention_mask,
-            top_mention_logits, top_mention_bounds,
+            embedding_context_reshape, top_mention_mask_reshape,
+            top_mention_logits_reshape, top_mention_bounds_reshape,
             mention_logits, mention_bounds,
         )
 
@@ -679,7 +684,7 @@ class BiEncoderRanker(torch.nn.Module):
             None, None, None,
             token_idx_cands, segment_idx_cands, mask_cands
         )
-        return embedding_cands.cpu().detach()
+        return embedding_cands
 
     # Score candidates given context input and label input
     # If cand_encs is provided (pre-computed), cand_vecs is ignored
@@ -713,6 +718,9 @@ class BiEncoderRanker(torch.nn.Module):
                 all_mention_logits, all_mention_bounds,
             ) = self.encode_context(
                 text_vecs, gold_mention_bounds=gold_mention_bounds,
+                gold_mention_bound_mask=gold_mention_bound_mask,
+                num_cand_mentions=num_cand_mentions,
+                topK_threshold=topK_threshold,
             )
             if gold_mention_bounds is not None:
                 # (bs * num_mentions, embed_size)
@@ -726,6 +734,8 @@ class BiEncoderRanker(torch.nn.Module):
         if cand_encs is not None:
             if gold_mention_bounds is not None:
                 if embedding_ctxt.size(1) != gold_mention_bounds.size(1):
+                    import pdb
+                    pdb.set_trace()
                     # (bs, #_gold_mentions, embed_dim)
                     try:
                         embedding_ctxt = self.model.module.classification_heads['get_context_embeds'](embedding_ctxt, gold_mention_bounds)
@@ -755,14 +765,8 @@ class BiEncoderRanker(torch.nn.Module):
         # cand_vecs: (bs, num_gold_mentions, 1, cand_width) -> (bs * num_gold_mentions, cand_width)
         cand_vecs = cand_vecs.view(-1, cand_vecs.size(-2), cand_vecs.size(-1)).squeeze(1)
         # Train time. We compare with all elements of the batch
-        token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
-            cand_vecs, self.NULL_IDX
-        )
-        # embedding_cands: (bs * num_gold_mentions, embed_dim)
-        _, embedding_cands, _, _, _, _, _, _, _ = self.model(
-            None, None, None,
-            token_idx_cands, segment_idx_cands, mask_cands
-        )
+        # (bs * num_gold_mentions, embed_dim)
+        embedding_cands = self.encode_candidate(cand_vecs)
         if random_negs:
             # if gold_mention_bounds is not None:
             if all_inputs_mask is None:
