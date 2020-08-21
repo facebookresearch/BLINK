@@ -93,23 +93,16 @@ def evaluate(
             mention_idx_mask = batch[-1].clone()
 
             if params["freeze_cand_enc"]:
-                import pdb
-                pdb.set_trace()
                 # get mention encoding
-                (
-                    embedding_context, top_mention_mask,
-                    top_mention_logits, top_mention_bounds,
-                    mention_logits, mention_bounds,
-                ) = reranker.encode_context(
+                context_outs = reranker.encode_context(
                     context_input,
                 )
+                import pdb
+                pdb.set_trace()
+                embedding_context = context_outs['mention_reps']
                 if embedding_context.size(0) > 0:
-                    if mention_idxs is None:
-                        # (bs, num_mentions)
-                        pred_mention_idx_mask = torch.sigmoid(mention_logits) > 0.5
-                    else:
-                        # (bs, 2)
-                        pred_mention_idx_mask = mention_idx_mask
+                    # (bs, 2)
+                    pred_mention_idx_mask = context_outs['mention_masks']
                     flattened_embedding_contexts = embedding_context[pred_mention_idx_mask]
                     # do faiss search for closest entity
                     D, I = faiss_index.search_knn(flattened_embedding_contexts.contiguous().detach().cpu().numpy(), 1)
@@ -309,12 +302,12 @@ def main(params):
         num_neighbors = 10
 
     # evaluate before training
-    results = evaluate(
-        reranker, valid_dataloader, params,
-        cand_encs=cand_encs, device=device,
-        logger=logger, faiss_index=cand_encs_index,
-        joint_mention_detection=False,
-    )
+    #results = evaluate(
+    #    reranker, valid_dataloader, params,
+    #    cand_encs=cand_encs, device=device,
+    #    logger=logger, faiss_index=cand_encs_index,
+    #    joint_mention_detection=False,
+    #)
 
     number_of_samples_per_dataset = {}
 
@@ -436,26 +429,24 @@ def main(params):
                 pos_cand_encs_input = cand_encs[label_ids.to("cpu")]
                 pos_cand_encs_input[~mention_idx_mask] = 0
 
-                (
-                    mention_reps, top_mention_mask,
-                    top_mention_logits, top_mention_bounds,
-                    mention_logits, mention_bounds,
-                ) = reranker.encode_context(
-                    context_input, gold_mention_bounds=mention_idxs,
-                    gold_mention_bounds_mask=mention_idx_mask,
-                )
                 import pdb
                 pdb.set_trace()
-                # mention_reps: (bs, max_num_spans, embed_size) -> masked_mention_reps: (bs * num_spans [masked], embed_size)
-                masked_mention_reps = mention_reps.reshape(-1, mention_reps.size(2))[mention_idx_mask.flatten()]
+                context_outs = reranker.encode_context(
+                    context_input, gold_mention_bounds=mention_idxs,
+                    gold_mention_bounds_mask=mention_idx_mask,
+                    get_mention_scores=False,
+                )
+                mention_reps = context_outs['mention_reps']
+                # mention_reps: (bs, max_num_spans, embed_size) -> masked_mention_reps: (all_pred_mentions_batch, embed_size)
+                masked_mention_reps = mention_reps[context_outs['mention_masks']]
 
-                # neg_cand_encs_input_idxs: (bs * num_spans [masked], num_negatives)
+                # neg_cand_encs_input_idxs: (all_pred_mentions_batch, num_negatives)
                 _, neg_cand_encs_input_idxs = cand_encs_index.search_knn(masked_mention_reps.detach().cpu().numpy(), num_neighbors)
                 neg_cand_encs_input_idxs = torch.from_numpy(neg_cand_encs_input_idxs)
                 # set "correct" closest entities to -1
-                # masked_label_ids: (bs * num_spans [masked])
-                masked_label_ids = label_ids.flatten()[mention_idx_mask.flatten()]
-                # neg_cand_encs_input_idxs: (bs * num_spans [masked], num_negatives)
+                # masked_label_ids: (all_pred_mentions_batch)
+                masked_label_ids = label_ids[mention_idx_mask]
+                # neg_cand_encs_input_idxs: (max_spans_in_batch, num_negatives)
                 neg_cand_encs_input_idxs[neg_cand_encs_input_idxs - masked_label_ids.to("cpu").unsqueeze(-1) == 0] = -1
 
                 # reshape back tensor (extract num_spans dimension)
@@ -506,26 +497,14 @@ def main(params):
                 ]).to(device)
                 all_inputs_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
 
-            loss, _ = reranker(
+            loss, _, _ = reranker(
                 context_input, candidate_input,
                 cand_encs=cand_encs_input, text_encs=mention_reps_input,
                 mention_logits=mention_logits, mention_bounds=mention_bounds,
-                label_input=label_input, gold_mention_idxs=mention_idxs,
-                gold_mention_idx_mask=mention_idx_mask,
+                label_input=label_input, gold_mention_bounds=mention_idxs,
+                gold_mention_bounds_mask=mention_idx_mask,
                 all_inputs_mask=all_inputs_mask,
             )
-            if params["debug"] and params["adversarial_training"]:
-                D, _ = cand_encs_index.search_knn(mention_reps.detach().cpu().numpy(), num_neighbors)
-                D = torch.tensor(D)
-                D = D.flatten()[mask]
-                _, scores = reranker(
-                    context_input, candidate_input,
-                    cand_encs=cand_encs_input, text_encs=mention_reps_input,
-                    mention_logits=mention_logits, mention_bounds=mention_bounds,
-                    label_input=label_input, gold_mention_idxs=mention_idxs,
-                    gold_mention_idx_mask=mention_idx_mask,
-                )
-                assert ((D - scores[mention_reps.size(0):].to("cpu")) < 0.0005).all()
 
             # if n_gpu > 1:
             #     loss = loss.mean() # mean() to average on multi-gpu.

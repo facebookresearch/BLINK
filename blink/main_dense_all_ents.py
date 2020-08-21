@@ -267,12 +267,13 @@ def _run_biencoder(
         context_input = batch[0].to(device)
         mask_ctxt = context_input != biencoder.NULL_IDX
         with torch.no_grad():
-            (
-                embedding_context, left_align_mask, chosen_mention_logits, chosen_mention_bounds,
-                _, _,
-            ) = biencoder.encode_context(
+            context_outs = biencoder.encode_context(
                 context_input, num_cand_mentions=num_cand_mentions, topK_threshold=threshold
             )
+            embedding_context = context_outs['mention_reps']
+            left_align_mask = context_outs['mention_masks']
+            chosen_mention_logits = context_outs['mention_logits']
+            chosen_mention_bounds = context_outs['mention_bounds']
 
             '''
             GET TOP CANDIDATES PER MENTION
