@@ -93,13 +93,15 @@ def evaluate(
             mention_idx_mask = batch[-1].clone()
 
             if params["freeze_cand_enc"]:
+                import pdb
+                pdb.set_trace()
                 # get mention encoding
                 (
                     embedding_context, top_mention_mask,
                     top_mention_logits, top_mention_bounds,
                     mention_logits, mention_bounds,
-                )= reranker.encode_context(
-                    context_input, gold_mention_idxs=mention_idxs,
+                ) = reranker.encode_context(
+                    context_input,
                 )
                 if embedding_context.size(0) > 0:
                     if mention_idxs is None:
@@ -439,8 +441,11 @@ def main(params):
                     top_mention_logits, top_mention_bounds,
                     mention_logits, mention_bounds,
                 ) = reranker.encode_context(
-                    context_input, gold_mention_idxs=mention_idxs,
+                    context_input, gold_mention_bounds=mention_idxs,
+                    gold_mention_bounds_mask=mention_idx_mask,
                 )
+                import pdb
+                pdb.set_trace()
                 # mention_reps: (bs, max_num_spans, embed_size) -> masked_mention_reps: (bs * num_spans [masked], embed_size)
                 masked_mention_reps = mention_reps.reshape(-1, mention_reps.size(2))[mention_idx_mask.flatten()]
 
