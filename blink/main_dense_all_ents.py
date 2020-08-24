@@ -282,10 +282,11 @@ def _run_biencoder(
             embedding_ctxt = embedding_context[left_align_mask]
             if indexer is None:
                 try:
-                    if embedding_ctxt.size(0) > 1:
-                        embedding_ctxt = embedding_ctxt.squeeze(0)
-                    # DIM (all_pred_mentions_batch, all_cand_entities)
-                    cand_logits = embedding_ctxt.mm(candidate_encoding.to(device).t())
+                    cand_logits, _, _ = biencoder.score_candidate(
+                        context_input, None,
+                        text_encs=embedding_ctxt,
+                        cand_encs=candidate_encoding.to(device),
+                    )
                     # DIM (all_pred_mentions_batch, num_cand_entities); (all_pred_mentions_batch, num_cand_entities)
                     top_cand_logits_shape, top_cand_indices_shape = cand_logits.topk(num_cand_entities, dim=-1, sorted=True)
                 except:

@@ -715,12 +715,8 @@ class BiEncoderRanker(torch.nn.Module):
         text_encs (batch_num_mentions, embed_size): Pre-encoded mention vectors, masked before input
         cand_encs (num_ents_to_match [batch_num_total_ents/all_ents], embed_size): Pre-encoded candidate vectors, masked before input
         """
-        import pdb
-        pdb.set_trace()
-        mention_logits = None
-        mention_bounds = None
         '''
-        Compute context representations
+        Compute context representations and/or get mention scores
         '''
         if text_encs is None or get_mention_scores:
             # embedding_ctxt: (bs, num_gold_mentions/num_pred_mentions, embed_size)
@@ -731,8 +727,14 @@ class BiEncoderRanker(torch.nn.Module):
                 topK_threshold=mention_threshold,
                 get_mention_scores=get_mention_scores,
             )
+
+        mention_logits = None
+        mention_bounds = None
+        if get_mention_scores:
             mention_logits = context_outs['all_mention_logits']
             mention_bounds = context_outs['all_mention_bounds']
+
+        if text_encs is None:
             if gold_mention_bounds is None:
                 # (all_batch_pred_mentions, embed_size)
                 embedding_ctxt = context_outs['mention_reps'][context_outs['mention_masks']]
@@ -768,6 +770,7 @@ class BiEncoderRanker(torch.nn.Module):
             embedding_cands = embedding_cands.unsqueeze(2)  # num_mention_in_batch x embed_size x 1
             scores = torch.bmm(embedding_ctxt, embedding_cands)  # num_mention_in_batch x 1 x 1
             scores = torch.squeeze(scores)
+            # (num_mention_in_batch,)
             return scores, mention_logits, mention_bounds
         else:
             # matmul across all cand_encs (in-batch, if cand_encs is None, or across all cand_encs)
@@ -783,9 +786,9 @@ class BiEncoderRanker(torch.nn.Module):
     def forward(
         self, context_input, cand_input,
         text_encs=None,  # pre-computed mention encoding.
-        cand_encs=None, 
+        cand_encs=None,  # pre-computed candidate embeddings 
         mention_logits=None,  # pre-computed mention logits
-        mention_bounds=None,
+        mention_bounds=None,  # pre-computed mention bounds
         label_input=None,  # labels for passed-in (if hard negatives training)
         gold_mention_bounds=None,
         gold_mention_bounds_mask=None,
@@ -812,7 +815,7 @@ class BiEncoderRanker(torch.nn.Module):
         '''
         GET CANDIDATE SCORES
         '''
-        scores, mention_logits, mention_bounds = self.score_candidate(
+        scores, out_mention_logits, out_mention_bounds = self.score_candidate(
             context_input, cand_input,
             hard_negs=hard_negs,
             cand_encs=cand_encs,
@@ -822,9 +825,13 @@ class BiEncoderRanker(torch.nn.Module):
             hard_negs_mask=hard_negs_mask,
             get_mention_scores=(return_loss and (mention_logits is None or mention_bounds is None)),
         )
+        if mention_logits is None:
+            mention_logits = out_mention_logits
+        if mention_bounds is None:
+            mention_bounds = out_mention_bounds
 
         if not return_loss:
-            return scores, mention_logits, mention_bounds
+            return None, scores, mention_logits, mention_bounds
 
         '''
         COMPUTE MENTION LOSS (TRAINING MODE)
@@ -847,10 +854,9 @@ class BiEncoderRanker(torch.nn.Module):
             '''
             Hard negatives (negatives passed in)
             '''
-            # scores: (bs, num_spans, all_embeds)
             loss_fct = nn.BCEWithLogitsLoss(reduction="mean")
-            # scores: ([masked] bs * num_spans), label_input: ([masked] bs * num_spans)
-            label_input = label_input.flatten()[hard_negs_mask]
+            label_input = label_input[hard_negs_mask]
+            # scores: (num_mentions_in_batch,); label_input: (num_mentions_in_batch,)
             loss = loss_fct(scores, label_input.float()) + span_loss
         else:
             '''
@@ -862,7 +868,7 @@ class BiEncoderRanker(torch.nn.Module):
             # log P(entity|mention) + log P(mention) = log [P(entity|mention)P(mention)]
             loss = F.cross_entropy(scores, target, reduction="mean") + span_loss
 
-        return loss, scores
+        return loss, scores, mention_logits, mention_bounds 
 
     def get_span_loss(
         self, gold_mention_bounds, gold_mention_bounds_mask, mention_logits, mention_bounds,

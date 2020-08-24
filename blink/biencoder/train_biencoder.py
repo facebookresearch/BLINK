@@ -49,7 +49,7 @@ np.random.seed(1234)  # reproducible for FAISS indexer
 # B is controlled by the parameter eval_batch_size
 def evaluate(
     reranker, eval_dataloader, params, device, logger,
-    cand_encs=None, faiss_index=None, joint_mention_detection=True,
+    cand_encs=None, faiss_index=None,
     get_losses=False,
 ):
     reranker.model.eval()
@@ -82,12 +82,6 @@ def evaluate(
         
         with torch.no_grad():
             # evaluate with joint mention detection
-            if joint_mention_detection:
-                mention_idxs = None
-            else:
-                mention_idxs = batch[-2]
-            mention_idx_mask = batch[-1].clone()
-
             if params["freeze_cand_enc"]:
                 # get mention encoding
                 context_outs = reranker.encode_context(
@@ -99,21 +93,16 @@ def evaluate(
                 pdb.set_trace()
                 embedding_context = context_outs['mention_reps']
                 if embedding_context.size(0) > 0:
-                    # (bs, 2)
                     pred_mention_idx_mask = context_outs['mention_masks']
-                    flattened_embedding_contexts = embedding_context[pred_mention_idx_mask]
+                    embedding_ctxt = embedding_context[context_outs['mention_mask']]
+                    chosen_mention_bounds = context_outs['mention_bounds']
                     # do faiss search for closest entity
-                    D, I = faiss_index.search_knn(flattened_embedding_contexts.contiguous().detach().cpu().numpy(), 1)
-                    I = I.flatten()
-                    I_reshape = -np.ones(embedding_context.shape[:2], dtype=I.dtype)
-                    try:
-                        I_reshape[pred_mention_idx_mask.contiguous().detach().cpu().numpy()] = I
-                    except:
-                        import pdb
-                        pdb.set_trace()
+                    # DIM (all_pred_mentions_batch, num_cand_entities); (all_pred_mentions_batch, num_cand_entities)
+                    top_cand_logits_shape, top_cand_indices_shape = indexer.search_knn(embedding_ctxt.cpu().numpy(), 10)
+		    top_cand_logits_shape = torch.tensor(top_cand_logits_shape).to(embedding_ctxt.device)
+		    top_cand_indices_shape = torch.tensor(top_cand_indices_shape).to(embedding_ctxt.device)
                 else:
-                    I = np.array([])
-                    I_reshape = np.array([])
+                    top_cand_logits_shape = np.array([])
                 tmp_eval_accuracy = 0.0
                 tmp_num_p = 0.0
                 tmp_num_r = 0.0
@@ -133,7 +122,7 @@ def evaluate(
                 if mention_idxs is None:
                     mention_idx_mask = None
                 embedding_context = None
-                logits, mention_logits, mention_bounds = reranker(
+                _, logits, mention_logits, mention_bounds = reranker(
                     context_input, candidate_input,
                     cand_encs=cand_encs,# label_input=label_ids,
                     gold_mention_idxs=batch[-2],
@@ -304,7 +293,6 @@ def main(params):
     #    reranker, valid_dataloader, params,
     #    cand_encs=cand_encs, device=device,
     #    logger=logger, faiss_index=cand_encs_index,
-    #    joint_mention_detection=False,
     #)
 
     number_of_samples_per_dataset = {}
@@ -430,7 +418,7 @@ def main(params):
                 context_outs = reranker.encode_context(
                     context_input, gold_mention_bounds=mention_idxs,
                     gold_mention_bounds_mask=mention_idx_mask,
-                    get_mention_scores=False,
+                    get_mention_scores=True,
                 )
                 mention_logits = context_outs['all_mention_logits']
                 mention_bounds = context_outs['all_mention_bounds']
@@ -495,7 +483,7 @@ def main(params):
                 ]).to(device)
                 hard_negs_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
 
-            loss, _ = reranker(
+            loss, _, _, _ = reranker(
                 context_input, candidate_input,
                 cand_encs=cand_encs_input, text_encs=mention_reps_input,
                 mention_logits=mention_logits, mention_bounds=mention_bounds,
@@ -545,7 +533,6 @@ def main(params):
                     reranker, valid_dataloader, params,
                     cand_encs=cand_encs, device=device,
                     logger=logger, faiss_index=cand_encs_index,
-                    joint_mention_detection=False,
                     get_losses=params["get_losses"],
                 )
                 model.train()
@@ -574,7 +561,6 @@ def main(params):
             reranker, valid_dataloader, params,
             cand_encs=cand_encs, device=device,
             logger=logger, faiss_index=cand_encs_index,
-            joint_mention_detection=False,
             get_losses=params["get_losses"],
         )
         logger.info("Train data evaluation")
@@ -582,7 +568,6 @@ def main(params):
             reranker, train_dataloader, params,
             cand_encs=cand_encs, device=device,
             logger=logger, faiss_index=cand_encs_index,
-            joint_mention_detection=False,
             get_losses=params["get_losses"],
         )
 
@@ -609,7 +594,7 @@ def main(params):
 
     if params["evaluate"]:
         params["path_to_model"] = model_output_path
-        evaluate(params, cand_encs=cand_encs, logger=logger, faiss_index=cand_encs_index, joint_mention_detection=False)
+        evaluate(params, cand_encs=cand_encs, logger=logger, faiss_index=cand_encs_index)
 
 
 if __name__ == "__main__":
