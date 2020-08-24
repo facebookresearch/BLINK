@@ -395,7 +395,7 @@ class BiEncoderModule(torch.nn.Module):
         segment_idx_ctxt,
         mask_ctxt,
         gold_mention_bounds=None,
-        gold_mention_bound_mask=None,
+        gold_mention_bounds_mask=None,
         num_cand_mentions=50,
         topK_threshold=-4.5,
         get_mention_scores=True,
@@ -446,7 +446,7 @@ class BiEncoderModule(torch.nn.Module):
             if top_mention_bounds is None:
                 # use gold mention
                 top_mention_bounds = gold_mention_bounds
-                top_mention_mask = gold_mention_bound_mask
+                top_mention_mask = gold_mention_bounds_mask
 
             assert top_mention_bounds is not None
             assert top_mention_mask is not None
@@ -470,9 +470,15 @@ class BiEncoderModule(torch.nn.Module):
         segment_idx_cands,
         mask_cands,
     ):
-        return self.cand_encoder(
-            token_idx_cands, segment_idx_cands, mask_cands
-        )
+        try:
+            return self.cand_encoder(
+                token_idx_cands, segment_idx_cands, mask_cands
+            )
+        except:
+            print(token_idx_cands.size())
+            print(segment_idx_cands.size())
+            print(mask_cands.size())
+            return torch.rand(token_idx_cands.size()).to(token_idx_cands.device)
 
     def forward(
         self,
@@ -693,31 +699,37 @@ class BiEncoderRanker(torch.nn.Module):
         self,
         text_vecs,
         cand_vecs,
-        hard_negs=False,  # (if training) passed in a subset of hard negatives
-        text_encs=None,  # pre-computed mention encoding.
-        mention_logits=None,  # pre-computed mention logits
-        mention_bounds=None,
+        text_encs=None,  # pre-computed mention encoding
         cand_encs=None,  # pre-computed candidate encoding.
         gold_mention_bounds=None,
-        gold_mention_bound_mask=None,
-        all_inputs_mask=None,
-        topK_threshold=-4.5,
+        gold_mention_bounds_mask=None,
+        num_cand_mentions=50,
+        mention_threshold=-4.5,
+        get_mention_scores=True,
+        hard_negs=False,  # (if training) passed in a subset of hard negatives
+        hard_negs_mask=None,  # (if hard negs training) mask for gold candidate mentions on all inputs (pos + negs)
     ):
+        """
+        text_vecs (bs, max_ctxt_size):
+        cand_vecs (bs, max_num_gold_mentions, 1, max_cand_size):
+        text_encs (batch_num_mentions, embed_size): Pre-encoded mention vectors, masked before input
+        cand_encs (num_ents_to_match [batch_num_total_ents/all_ents], embed_size): Pre-encoded candidate vectors, masked before input
+        """
         import pdb
         pdb.set_trace()
+        mention_logits = None
+        mention_bounds = None
         '''
         Compute context representations
         '''
-        if text_encs is None or (
-            (mention_logits is None and mention_bounds is not None)
-        ):
+        if text_encs is None or get_mention_scores:
             # embedding_ctxt: (bs, num_gold_mentions/num_pred_mentions, embed_size)
             context_outs = self.encode_context(
                 text_vecs, gold_mention_bounds=gold_mention_bounds,
-                gold_mention_bound_mask=gold_mention_bound_mask,
+                gold_mention_bounds_mask=gold_mention_bounds_mask,
                 num_cand_mentions=num_cand_mentions,
-                get_mention_scores=True,
-                topK_threshold=topK_threshold,
+                topK_threshold=mention_threshold,
+                get_mention_scores=get_mention_scores,
             )
             mention_logits = context_outs['all_mention_logits']
             mention_bounds = context_outs['all_mention_bounds']
@@ -735,31 +747,34 @@ class BiEncoderRanker(torch.nn.Module):
         Compute candidate representations
         '''
         if cand_encs is None:
-            # Train time: Compare across all candidates in the same batch
-            # cand_vecs: (bs, num_gold_mentions, 1, cand_width) -> (bs * num_gold_mentions, cand_width)
-            cand_vecs = cand_vecs.view(-1, cand_vecs.size(-2), cand_vecs.size(-1)).squeeze(1)
-            # (bs * num_gold_mentions, embed_dim)
+            # Train time: Compute candidates in batch and compare in-batch negatives
+            # cand_vecs: (bs, num_gold_mentions, 1, cand_width) -> (batch_num_gold_mentions, cand_width)
+            cand_vecs = cand_vecs[gold_mention_bounds_mask].squeeze(1)
+            # (batch_num_gold_mentions, embed_dim)
             embedding_cands = self.encode_candidate(cand_vecs)
         else:
-            assert cand_encs is not None or cand_encs_indexer is not None
+            # (batch_num_gold_mentions, embed_dim)
             embedding_cands = cand_encs
 
         '''
         Do inner-product search, or obtain scores on hard-negative entities
         '''
         if hard_negs:
-            assert all_inputs_mask is not None
-            # (bs * num_mentions, embed_size)
-            embedding_cands = embedding_cands[all_inputs_mask]
-            embedding_ctxt = embedding_ctxt.unsqueeze(1)  # (batchsize * num_mentions) x 1 x embed_size
-            embedding_cands = embedding_cands.unsqueeze(2)  # (batchsize * num_mentions) x embed_size x 1
-            scores = torch.bmm(embedding_ctxt, cand_encs)  # (batchsize * num_mentions) x 1 x 1
+            assert hard_negs_mask is not None
+            # (num_mention_in_batch, embed_dim)
+            embedding_ctxt = embedding_ctxt[hard_negs_mask]
+            embedding_cands = embedding_cands[hard_negs_mask]
+            embedding_ctxt = embedding_ctxt.unsqueeze(1)  # num_mention_in_batch x 1 x embed_size
+            embedding_cands = embedding_cands.unsqueeze(2)  # num_mention_in_batch x embed_size x 1
+            scores = torch.bmm(embedding_ctxt, embedding_cands)  # num_mention_in_batch x 1 x 1
             scores = torch.squeeze(scores)
             return scores, mention_logits, mention_bounds
         else:
             # matmul across all cand_encs (in-batch, if cand_encs is None, or across all cand_encs)
             # (all_batch_pred_mentions, num_cands)
+            # similarity score between ctxt i and cand j
             all_scores = embedding_ctxt.mm(embedding_cands.t())
+                
             return all_scores, mention_logits, mention_bounds
 
 
@@ -767,34 +782,52 @@ class BiEncoderRanker(torch.nn.Module):
     # If label_input is None, train on in-batch negatives
     def forward(
         self, context_input, cand_input,
-        cand_encs=None, 
         text_encs=None,  # pre-computed mention encoding.
+        cand_encs=None, 
         mention_logits=None,  # pre-computed mention logits
         mention_bounds=None,
-        label_input=None,
+        label_input=None,  # labels for passed-in (if hard negatives training)
         gold_mention_bounds=None,
-        gold_mention_bound_mask=None,
-        all_inputs_mask=None,  # should be non-none if we are using negs
+        gold_mention_bounds_mask=None,
+        hard_negs_mask=None,  # should be non-none if we are using negs
         return_loss=True,
     ):
-        flag = label_input is None
+        """
+        text_encs/cand_encs/label_inputs masked before training
+        In-batch negs training: cand_encs None, label_inputs None, return_loss True
+        Hard negs training: cand_encs non-None, label_inputs non-None, return_loss True
+            cand_encs = all entities in batch + additional hard negatives
+        Inference: cand_encs non-None, label_inputs None, return_loss False
+            cand_encs = all entities in DB
 
+        cand_encs
+           non-None: set of candidate encodings to search in
+           None: compute in-batch candidate vectors (used as negatives if train mode)
+        label_inputs
+           non-None: labels to use for hard negatives training
+           None: random negatives training and/or inference
+        """
+        hard_negs = label_input is not None
+
+        '''
+        GET CANDIDATE SCORES
+        '''
         scores, mention_logits, mention_bounds = self.score_candidate(
-            context_input, cand_input, random_negs=flag,
+            context_input, cand_input,
+            hard_negs=hard_negs,
             cand_encs=cand_encs,
             text_encs=text_encs,
-            mention_logits=mention_logits,
-            mention_bounds=mention_bounds,
             gold_mention_bounds=gold_mention_bounds,
-            gold_mention_bound_mask=gold_mention_bound_mask,
-            all_inputs_mask=all_inputs_mask,
+            gold_mention_bounds_mask=gold_mention_bounds_mask,
+            hard_negs_mask=hard_negs_mask,
+            get_mention_scores=(return_loss and (mention_logits is None or mention_bounds is None)),
         )
 
         if not return_loss:
             return scores, mention_logits, mention_bounds
 
         '''
-        COMPUTE MENTION LOSS
+        COMPUTE MENTION LOSS (TRAINING MODE)
         '''
         span_loss = 0
         if mention_logits is not None and mention_bounds is not None:
@@ -803,50 +836,53 @@ class BiEncoderRanker(torch.nn.Module):
             # 1 value
             span_loss = self.get_span_loss(
                 gold_mention_bounds=gold_mention_bounds, 
-                gold_mention_bound_mask=gold_mention_bound_mask,
+                gold_mention_bounds_mask=gold_mention_bounds_mask,
                 mention_logits=mention_logits, mention_bounds=mention_bounds,
-                N=N, M=M,
             )
 
         '''
-        COMPUTE EL LOSS
+        COMPUTE EL LOSS (TRAINING MODE)
         '''
-        if label_input is None:
+        if hard_negs:
             '''
             Hard negatives (negatives passed in)
+            '''
+            # scores: (bs, num_spans, all_embeds)
+            loss_fct = nn.BCEWithLogitsLoss(reduction="mean")
+            # scores: ([masked] bs * num_spans), label_input: ([masked] bs * num_spans)
+            label_input = label_input.flatten()[hard_negs_mask]
+            loss = loss_fct(scores, label_input.float()) + span_loss
+        else:
+            '''
+            Random negatives (use in-batch negatives)
             '''
             # scores: (bs*num_mentions [filtered], bs*num_mentions [filtered])
             target = torch.LongTensor(torch.arange(scores.size(1)))
             target = target.to(self.device)
             # log P(entity|mention) + log P(mention) = log [P(entity|mention)P(mention)]
             loss = F.cross_entropy(scores, target, reduction="mean") + span_loss
-        else:
-            '''
-            Random negatives (use in-batch negatives)
-            '''
-            # scores: (bs, num_spans, all_embeds)
-            if flag:
-                all_inputs_mask = gold_mention_bound_mask
-            loss_fct = nn.BCEWithLogitsLoss(reduction="mean")
-            # scores: ([masked] bs * num_spans), label_input: ([masked] bs * num_spans)
-            label_input = label_input.flatten()[all_inputs_mask.flatten()]
-            loss = loss_fct(scores, label_input.float()) + span_loss
 
         return loss, scores
 
     def get_span_loss(
-        self, gold_mention_bounds, gold_mention_bound_mask, mention_logits, mention_bounds, N, M,  # global_step,
+        self, gold_mention_bounds, gold_mention_bounds_mask, mention_logits, mention_bounds,
     ):
+        """
+        gold_mention_bounds (bs, num_mentions, 2)
+        gold_mention_bounds_mask (bs, num_mentions):
+        mention_logits (bs, all_mentions)
+        menion_bounds (bs, all_mentions, 2)
+        """
         loss_fct = nn.BCEWithLogitsLoss(reduction="mean")
 
-        gold_mention_bounds[~gold_mention_bound_mask] = -1  # ensure don't select masked to score
+        gold_mention_bounds[~gold_mention_bounds_mask] = -1  # ensure don't select masked to score
         # triples of [ex in batch, mention_idx in gold_mention_bounds, idx in mention_bounds]
         # use 1st, 2nd to index into gold_mention_bounds, 1st, 3rd to index into mention_bounds
         gold_mention_pos_idx = ((
             mention_bounds.unsqueeze(1) - gold_mention_bounds.unsqueeze(2)  # (bs, num_mentions, start_pos * end_pos, 2)
         ).abs().sum(-1) == 0).nonzero()
         # gold_mention_pos_idx should have 1 entry per masked element
-        # (num_gold_mentions [~gold_mention_bound_mask])
+        # (num_gold_mentions [~gold_mention_bounds_mask])
         gold_mention_pos = gold_mention_pos_idx[:,2]
 
         # (bs, total_possible_spans)

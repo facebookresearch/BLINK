@@ -82,11 +82,7 @@ def evaluate(
         
         with torch.no_grad():
             # evaluate with joint mention detection
-            if ((
-                hasattr(reranker.model, 'do_mention_detection') and reranker.model.do_mention_detection
-            ) or (
-                hasattr(reranker.model, 'module') and reranker.model.module.do_mention_detection
-            )) and joint_mention_detection:
+            if joint_mention_detection:
                 mention_idxs = None
             else:
                 mention_idxs = batch[-2]
@@ -96,6 +92,8 @@ def evaluate(
                 # get mention encoding
                 context_outs = reranker.encode_context(
                     context_input,
+                    num_cand_mentions=50,
+                    topK_threshold=-3.5,
                 )
                 import pdb
                 pdb.set_trace()
@@ -419,7 +417,7 @@ def main(params):
             mention_reps_input = None
             mention_logits = None
             mention_bounds = None
-            all_inputs_mask = mention_idx_mask
+            hard_negs_mask = None
             if params["adversarial_training"]:
                 assert cand_encs is not None and label_ids is not None  # due to params["freeze_cand_enc"] being set
                 '''
@@ -429,13 +427,13 @@ def main(params):
                 pos_cand_encs_input = cand_encs[label_ids.to("cpu")]
                 pos_cand_encs_input[~mention_idx_mask] = 0
 
-                import pdb
-                pdb.set_trace()
                 context_outs = reranker.encode_context(
                     context_input, gold_mention_bounds=mention_idxs,
                     gold_mention_bounds_mask=mention_idx_mask,
                     get_mention_scores=False,
                 )
+                mention_logits = context_outs['all_mention_logits']
+                mention_bounds = context_outs['all_mention_bounds']
                 mention_reps = context_outs['mention_reps']
                 # mention_reps: (bs, max_num_spans, embed_size) -> masked_mention_reps: (all_pred_mentions_batch, embed_size)
                 masked_mention_reps = mention_reps[context_outs['mention_masks']]
@@ -495,15 +493,16 @@ def main(params):
                 cand_encs_input = torch.cat([
                     pos_cand_encs_input, neg_cand_encs_input,
                 ]).to(device)
-                all_inputs_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
+                hard_negs_mask = torch.cat([mention_idx_mask, neg_mention_idx_mask])
 
-            loss, _, _ = reranker(
+            loss, _ = reranker(
                 context_input, candidate_input,
                 cand_encs=cand_encs_input, text_encs=mention_reps_input,
                 mention_logits=mention_logits, mention_bounds=mention_bounds,
                 label_input=label_input, gold_mention_bounds=mention_idxs,
                 gold_mention_bounds_mask=mention_idx_mask,
-                all_inputs_mask=all_inputs_mask,
+                hard_negs_mask=hard_negs_mask,
+                return_loss=True,
             )
 
             # if n_gpu > 1:
