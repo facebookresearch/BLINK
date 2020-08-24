@@ -16,6 +16,7 @@ import random
 import time
 import traceback
 import numpy as np
+from scipy.special import softmax, expit
 
 import torch.nn.functional as F
 
@@ -31,6 +32,7 @@ from pytorch_transformers.optimization import WarmupLinearSchedule
 from pytorch_transformers.tokenization_bert import BertTokenizer
 
 from blink.biencoder.biencoder import BiEncoderRanker
+from blink.vcg_utils.measures import entity_linking_tp_with_overlap
 import logging
 
 import blink.candidate_ranking.utils as utils
@@ -60,9 +62,9 @@ def evaluate(
 
     results = {}
 
-    eval_accuracy = 0.0
+    eval_num_correct = 0.0
     eval_num_p = 0.0
-    eval_num_r = 0.0
+    eval_num_g = 0.0
     nb_eval_examples = 0
     nb_eval_steps = 0
     overall_loss = 0.0
@@ -76,9 +78,11 @@ def evaluate(
         context_input = batch[0]	
         candidate_input = batch[1]
         # (bs, num_actual_spans)
-        label_ids = batch[2] if params["freeze_cand_enc"] else None
+        label_ids = batch[2].cpu().numpy() if params["freeze_cand_enc"] else None
         if params["debug"] and label_ids is not None:
             label_ids[label_ids > 199] = 199
+        mention_idx = batch[-2].cpu().numpy()
+        mention_idx_mask = batch[-1].cpu().numpy()
         
         with torch.no_grad():
             # evaluate with joint mention detection
@@ -91,81 +95,76 @@ def evaluate(
                 )
                 import pdb
                 pdb.set_trace()
-                embedding_context = context_outs['mention_reps']
-                if embedding_context.size(0) > 0:
-                    pred_mention_idx_mask = context_outs['mention_masks']
-                    embedding_ctxt = embedding_context[context_outs['mention_mask']]
-                    chosen_mention_bounds = context_outs['mention_bounds']
-                    # do faiss search for closest entity
-                    # DIM (all_pred_mentions_batch, num_cand_entities); (all_pred_mentions_batch, num_cand_entities)
-                    top_cand_logits_shape, top_cand_indices_shape = indexer.search_knn(embedding_ctxt.cpu().numpy(), 10)
-		    top_cand_logits_shape = torch.tensor(top_cand_logits_shape).to(embedding_ctxt.device)
-		    top_cand_indices_shape = torch.tensor(top_cand_indices_shape).to(embedding_ctxt.device)
-                else:
-                    top_cand_logits_shape = np.array([])
-                tmp_eval_accuracy = 0.0
+                embedding_context = context_outs['mention_reps'].cpu().numpy()
+                pred_mention_mask = context_outs['mention_masks'].cpu().numpy()
+                chosen_mention_bounds = context_outs['mention_bounds'].cpu().numpy()
+                embedding_ctxt = embedding_context[pred_mention_mask]
+                # do faiss search for closest entity
+                # DIM (all_pred_mentions_batch, num_cand_entities); (all_pred_mentions_batch, num_cand_entities)
+                top_cand_logits_shape, top_cand_indices_shape = faiss_index.search_knn(embedding_ctxt, 10)
+                top_cand_logits = np.zeros((pred_mention_mask.shape[0], pred_mention_mask.shape[1], 10), dtype=np.float)
+                top_cand_indices = np.zeros_like(pred_mention_mask, dtype=np.int)
+                top_cand_logits[pred_mention_mask] = top_cand_logits_shape
+                top_cand_indices[pred_mention_mask] = top_cand_indices_shape[:,0]
+                scores = (np.log(softmax(top_cand_logits, -1)) + torch.sigmoid(context_outs['mention_logits'].unsqueeze(-1)).log().cpu().numpy())[:,:,0]
+                tmp_num_correct = 0.0
                 tmp_num_p = 0.0
-                tmp_num_r = 0.0
-                for i, ex in enumerate(I_reshape):
-                    ex_label_ids = label_ids[i][mention_idx_mask[i]]
-                    ex = ex[pred_mention_idx_mask[i].contiguous().detach().cpu().numpy()]
-                    # unique-ify ex
-                    seen_ex = {}
-                    for j in ex:
-                        if j not in seen_ex:
-                            tmp_eval_accuracy += j in ex_label_ids  # only 1, so +1 if present, -1 if not present
-                            seen_ex[j] = 0
-                    tmp_num_p += float(len(ex))
-                tmp_num_r += float(mention_idx_mask.sum())
+                tmp_num_g = 0.0
+                for i, ex in enumerate(top_cand_indices):
+                    gold_mb = mention_idx[i][mention_idx_mask[i]]
+                    gold_label_ids = label_ids[i][mention_idx_mask[i]]
+                    overall_score_mask = scores[i][pred_mention_mask[i]] > -2.5
+                    pred_mb = chosen_mention_bounds[i][pred_mention_mask[i]][overall_score_mask]
+                    pred_label_ids = ex[pred_mention_mask[i]][overall_score_mask]
+                    gold_triples = [(str(gold_label_ids[j]), gold_mb[j][0], gold_mb[j][1]) for j in range(len(gold_mb))]
+                    pred_triples = [(str(pred_label_ids[j]), pred_mb[j][0], pred_mb[j][1]) for j in range(len(pred_mb))]
+                    num_overlap_weak, _ = entity_linking_tp_with_overlap(gold_triples, pred_triples)
+                    tmp_num_correct += num_overlap_weak
+                    tmp_num_p += float(len(pred_triples))
+                    tmp_num_g += float(len(gold_triples))
                 text_encs = embedding_context
             else:
-                if mention_idxs is None:
-                    mention_idx_mask = None
+                import pdb
+                pdb.set_trace()
                 embedding_context = None
-                _, logits, mention_logits, mention_bounds = reranker(
+                loss, logits, mention_logits, mention_bounds = reranker(
                     context_input, candidate_input,
-                    cand_encs=cand_encs,# label_input=label_ids,
-                    gold_mention_idxs=batch[-2],
-                    gold_mention_idx_mask=batch[-1],
-                    return_loss=False,
+                    cand_encs=cand_encs,
+                    gold_mention_bounds=batch[-2],
+                    gold_mention_bounds_mask=batch[-1],
+                    return_loss=True,
                 )
-                logits = logits.detach().cpu().numpy()
+                logits = logits.cpu().numpy()
                 # Using in-batch negatives, the label ids are diagonal
-                label_ids = torch.LongTensor(torch.arange(logits.shape[0]))#.unsqueeze(-1)
-                label_ids = label_ids.detach().cpu().numpy()
-                tmp_eval_accuracy = utils.accuracy(logits, label_ids)
-                tmp_num_p = 0.0
-                tmp_num_r = 0.0
-                text_encs = None
+                label_ids = torch.LongTensor(torch.arange(logits.shape[0]))
+                label_ids = label_ids.cpu().numpy()
+                tmp_num_correct = utils.accuracy(logits, label_ids)
+                tmp_num_p = len(batch[-2][batch[-1]])
+                tmp_num_g = len(batch[-2][batch[-1]])
 
-            overall_loss += loss
+                overall_loss += loss
 
-        eval_accuracy += tmp_eval_accuracy
+        eval_num_correct += tmp_num_correct
         eval_num_p += tmp_num_p
-        eval_num_r += tmp_num_r
+        eval_num_g += tmp_num_g
 
-        nb_eval_examples += context_input.size(0)
         nb_eval_steps += 1
 
     if cand_encs is not None:
         cand_encs = cand_encs.to("cpu")
         torch.cuda.empty_cache()
 
-    normalized_eval_accuracy = 0
-    if nb_eval_examples > 0:
-        normalized_eval_accuracy = eval_accuracy / nb_eval_examples
-    if nb_eval_steps > 0:
+    if nb_eval_steps > 0 and overall_loss > 0:
         normalized_overall_loss = overall_loss / nb_eval_steps
+        logger.info("Overall loss: %.5f" % normalized_overall_loss)
     if eval_num_p > 0:
-        normalized_eval_p = eval_accuracy / eval_num_p
+        normalized_eval_p = eval_num_correct / eval_num_p
     else:
         normalized_eval_p = 0.0
-    if eval_num_r > 0:
-        normalized_eval_r = eval_accuracy / eval_num_r
+    if eval_num_g > 0:
+        normalized_eval_r = eval_num_correct / eval_num_g
     else:
         normalized_eval_r = 0.0
-    logger.info("Overall loss: %.5f" % overall_loss)
-    logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
     logger.info("Precision: %.5f" % normalized_eval_p)
     logger.info("Recall: %.5f" % normalized_eval_r)
     if normalized_eval_p + normalized_eval_r == 0:
@@ -173,7 +172,7 @@ def evaluate(
     else:
         f1 = 2 * normalized_eval_p * normalized_eval_r / (normalized_eval_p + normalized_eval_r)
     logger.info("F1: %.5f" % f1)
-    results["normalized_accuracy"] = normalized_eval_accuracy
+    results["normalized_f1"] = f1
     return results
 
 
@@ -289,11 +288,11 @@ def main(params):
         num_neighbors = 10
 
     # evaluate before training
-    #results = evaluate(
-    #    reranker, valid_dataloader, params,
-    #    cand_encs=cand_encs, device=device,
-    #    logger=logger, faiss_index=cand_encs_index,
-    #)
+    results = evaluate(
+        reranker, valid_dataloader, params,
+        cand_encs=cand_encs, device=device,
+        logger=logger, faiss_index=cand_encs_index,
+    )
 
     number_of_samples_per_dataset = {}
 
@@ -549,14 +548,7 @@ def main(params):
         }, os.path.join(epoch_output_folder_path, "training_state.th"))
 
         output_eval_file = os.path.join(epoch_output_folder_path, "eval_results.txt")
-        # logger.info("Valid data evaluation")
-        # results = evaluate(
-        #     reranker, valid_dataloader, params,
-        #     cand_encs=cand_encs, device=device,
-        #     logger=logger, faiss_index=cand_encs_index,
-        #     get_losses=params["get_losses"],
-        # )
-        logger.info("Valid data evaluation -- non-end2end")
+        logger.info("Valid data evaluation")
         results = evaluate(
             reranker, valid_dataloader, params,
             cand_encs=cand_encs, device=device,
@@ -571,7 +563,7 @@ def main(params):
             get_losses=params["get_losses"],
         )
 
-        ls = [best_score, results["normalized_accuracy"]]
+        ls = [best_score, results["normalized_f1"]]
         li = [best_epoch_idx, epoch_idx]
 
         best_score = ls[np.argmax(ls)]
