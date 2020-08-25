@@ -1,7 +1,7 @@
-## End-to-End Entity Linking
+# End-to-End Entity Linking
 
 
-### Data
+## Data
 Data can be found in:
 - Entity linking data is under https://dl.fbaipublicfiles.com/elq/EL4QA_data.tar.gz.
 - All data is under https://dl.fbaipublicfiles.com/elq/all_data.tar.gz
@@ -12,15 +12,17 @@ The FAISS indices are under:
 - https://dl.fbaipublicfiles.com/elq/faiss_hnsw_index.pkl
     - Note this differs from HNSW used in BLINK, as it returns inner product score
 You can also create your own FAISS indices by running
+
 ```console
 
 ```
 
-**TODO: Release tokenized version of data (alongside original)**
-### Model Architecture
+## Model Architecture
 **TODO cite paper**
+QA-only model is under https://dl.fbaipublicfiles.com/elq/elq_webqsp_only_large.bin
+Entity token ids are under https://dl.fbaipublicfiles.com/elq/entity_token_ids_128.t7
 
-### Setup
+## Setup
 1. Create conda environment and install requirements
 ```console
 conda create -n el4qa -y python=3.7 && conda activate el4qa
@@ -33,34 +35,35 @@ chmod +x download_models.sh
 ./download_models.sh
 ```
 
-### Interactive Mode
+## Interactive Mode
 ```console
+export PYTHONPATH=.
 python blink/main_dense.py -i --biencoder_model models/elq_wiki_large.bin
 ```
 
-### Training
-Train on WebQSP
+## Training
+### Train on WebQSP
 ```console
-sbatch train_biencoder.sh webqsp_all_ents all_avg train 128 true 20 true true large qa_linear
+sbatch train_biencoder.sh webqsp_all_ents all_avg train 128 20 true true large qa_linear
 ```
 Saves under
 ```
-experiments/webqsp_all_ents/all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear
+experiments/webqsp/all_avg_20_true_true_bert_large_qa_linear
 ```
 
-Finetune on WebQSP
+### Finetune on WebQSP
 1. Copy pretraining checkpoint directory `experiments/wiki_all_ents/*/epoch_*` to `experiments/webqsp_all_ents/all_mention_biencoder_all_avg_true_32_true_true_bert_large_qa_linear/epoch_0`
 2. Delete the saved trainer state (to reset trainer from scratch): `rm experiments/webqsp_all_ents/all_mention_biencoder_all_avg_true_32_true_true_bert_large_qa_linear/epoch_0/training_state.th`
 3. Run:
 ```console
-sbatch train_biencoder.sh webqsp_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 0
+sbatch train_biencoder.sh webqsp_all_ents all_avg train 32 128 true true large qa_linear 0 -1 0
 ```
 Saves under
 ```
-experiments/webqsp_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear
+experiments/webqsp_all_ents/all_mention_biencoder_all_avg_128_true_true_bert_large_qa_linear
 ```
 
-Train on Wikipedia
+### Train on Wikipedia
 ```console
 sbatch train_biencoder.sh wiki_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 22 64
 sbatch train_biencoder.sh wiki_all_ents all_avg train 32 true 128 false false large qa_linear 0 -1 3 64
@@ -75,7 +78,7 @@ experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_false_false_ber
 ```
 
 
-### Generating Entity Embeddings
+## Generating Entity Embeddings
 ```console
 bash run_slurm.sh wiki_all_ents all_avg true 128 false false large <epoch_to_pick_up_from>
 ```
@@ -87,24 +90,24 @@ bash run_slurm.sh wiki_all_ents all_avg true 128 false false base <epoch_to_pick
 Saves under `models/entity_encodings/wiki_all_ents_all_avg_true_128_false_false_bert_base_qa_linear`
 
 
-### Evaluation
+## Evaluation
 Zero-shot from Wikipedia
 ```console
-CUDA_VISIBLE_DEVICES=0 bash run_eval_all_ents_slurm.sh WebQSP_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;49' -2.9 50 joint
+CUDA_VISIBLE_DEVICES=0 bash run_eval_slurm.sh WebQSP_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;49' -2.9 50 joint
 
-CUDA_VISIBLE_DEVICES=1 bash run_eval_all_ents_slurm.sh graphquestions_EL test 'wiki_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;49' -2.9 50 joint
+CUDA_VISIBLE_DEVICES=1 bash run_eval_all_ents_slurm.sh graphquestions_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;49' -2.9 50 joint
 ```
 
 Pretrain on Wikipedia, finetuned on WebQSP
 ```console
-bash run_eval_all_ents_slurm.sh WebQSP_EL $split 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;18' -1.5 50 joint
+bash run_eval_all_ents_slurm.sh WebQSP_EL $split 'finetuned_webqsp;all_avg_128_true_true_bert_large_qa_linear;18' -1.5 50 joint
 
-bash run_eval_all_ents_slurm.sh graphquestions_EL $split 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;18' -1.5 50 joint
+bash run_eval_all_ents_slurm.sh graphquestions_EL $split 'finetuned_webqsp;all_avg_128_true_true_bert_large_qa_linear;18' -1.5 50 joint
 ```
 
 Run something on CPUs:
 ```console
-srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_all_ents_slurm.sh nq ${split} 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_true_bert_large_qa_linear' -4.5 50 joint 16
+srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_all_ents_slurm.sh nq ${split} 'finetuned_webqsp;all_mention_biencoder_all_avg_20_true_true_bert_large_qa_linear' -4.5 50 joint 16
 ```
 
 For Wiki-trained, best threshold is `TODO` (-2.9) for WebQSP, `TODO` (-2.9) for graphquestions, -3.5 for AIDA-YAGO.
