@@ -31,9 +31,20 @@ class BertEncoder(nn.Module):
         if DEBUG:
             import pdb
             pdb.set_trace()
-        output_bert, output_pooler, _ = self.bert_model(
-            token_ids, segment_ids, attention_mask
-        )
+        try:
+            output_bert, output_pooler, _ = self.bert_model(
+                token_ids, segment_ids, attention_mask
+            )
+        except RuntimeError as e:
+            print(token_ids.size())
+            print(segment_ids.size())
+            print(attention_mask.size())
+            print(e)
+            import pdb
+            pdb.set_trace()
+            output_bert, output_pooler, _ = self.bert_model(
+                token_ids, segment_ids, attention_mask
+            )
 
         if self.additional_linear is not None:
             # embeddings = (batch_size, embedding_size)

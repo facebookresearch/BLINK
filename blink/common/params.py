@@ -180,15 +180,6 @@ class BlinkParser(argparse.ArgumentParser):
             help="Don't add tokens around target mention. MUST BE FALSE IF 'mention_aggregation_type' is NONE",
         )
         parser.add_argument(
-            "--do_mention_detection",
-            dest="do_mention_detection",
-            action="store_true",
-            default=False,
-            help="Flag for triggering joint mention detection. "
-            "Set 'FALSE' to only use entity linking portion of model "
-            "(assumes gold mention bounds given)",
-        )
-        parser.add_argument(
             "--mention_scoring_method",
             dest="mention_scoring_method",
             default="qa_linear",

@@ -1,6 +1,11 @@
 ## End-to-End Entity Linking
 
-All data is under `/checkpoint/belindali/entity_link/data/*/tokenized`. The public link is https://dl.fbaipublicfiles.com/elq/EL4QA_data.tar.gz.
+
+### Data
+Data can be found in:
+- Entity linking data is under https://dl.fbaipublicfiles.com/elq/EL4QA_data.tar.gz.
+- All data is under https://dl.fbaipublicfiles.com/elq/all_data.tar.gz
+- [FB Internal] Data under `/checkpoint/belindali/entity_link/data/*/tokenized`.
 
 The FAISS indices are under:
 - https://dl.fbaipublicfiles.com/elq/faiss_flat_index.pkl
@@ -30,20 +35,13 @@ chmod +x download_models.sh
 
 ### Interactive Mode
 ```console
-python blink/main_dense_all_ents.py -i \
-    --test_entities models/entity.jsonl \
-    --entity_catalogue models/entity.jsonl \
-    --entity_encoding models/all_entities_large.t7 \
-    --biencoder_model experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear/epoch_22/pytorch_model.bin \
-    --biencoder_config experiments/wiki_all_ents/all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear/training_params.txt \
-    --threshold -4.5 --num_cand_mentions 50 --num_cand_entities 10 \
-    --threshold_type joint --faiss_index hnsw --index_path models/faiss_hnsw_index.pkl
+python blink/main_dense.py -i --biencoder_model models/elq_wiki_large.bin
 ```
 
 ### Training
 Train on WebQSP
 ```console
-sbatch examples/train_biencoder.sh webqsp_all_ents all_avg train 128 true 20 true true large qa_linear
+sbatch train_biencoder.sh webqsp_all_ents all_avg train 128 true 20 true true large qa_linear
 ```
 Saves under
 ```
@@ -55,7 +53,7 @@ Finetune on WebQSP
 2. Delete the saved trainer state (to reset trainer from scratch): `rm experiments/webqsp_all_ents/all_mention_biencoder_all_avg_true_32_true_true_bert_large_qa_linear/epoch_0/training_state.th`
 3. Run:
 ```console
-sbatch examples/train_biencoder.sh webqsp_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 0
+sbatch train_biencoder.sh webqsp_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 0
 ```
 Saves under
 ```
@@ -64,9 +62,9 @@ experiments/webqsp_all_ents/all_mention_biencoder_all_avg_true_128_true_true_ber
 
 Train on Wikipedia
 ```console
-sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 22 64
-sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 false false large qa_linear 0 -1 3 64
-sbatch examples/train_biencoder.sh wiki_all_ents all_avg train 32 true 128 false false base qa_linear 0 -1 10 64
+sbatch train_biencoder.sh wiki_all_ents all_avg train 32 true 128 true true large qa_linear 0 -1 22 64
+sbatch train_biencoder.sh wiki_all_ents all_avg train 32 true 128 false false large qa_linear 0 -1 3 64
+sbatch train_biencoder.sh wiki_all_ents all_avg train 32 true 128 false false base qa_linear 0 -1 10 64
 ```
 
 Saves under
