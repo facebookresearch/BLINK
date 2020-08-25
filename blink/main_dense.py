@@ -119,18 +119,19 @@ def _load_candidates(
     logger.info("Finished loading candidate encodings")
 
     if not os.path.exists("models/id2title.json"):
-	id2title = {}
-	id2text = {}
-	id2wikidata = {}
-	local_idx = 0
-	with open(entity_catalogue, "r") as fin:
-	    lines = fin.readlines()
-	    for line in lines:
-		entity = json.loads(line)
-		id2title[local_idx] = entity["title"]
-		id2text[local_idx] = entity["text"]
-                id2wikidata[local_idx] = entity["kb_idx"]
-		local_idx += 1
+        id2title = {}
+        id2text = {}
+        id2wikidata = {}
+        local_idx = 0
+        with open(entity_catalogue, "r") as fin:
+            lines = fin.readlines()
+            for line in lines:
+                entity = json.loads(line)
+                id2title[local_idx] = entity["title"]
+                id2text[local_idx] = entity["text"]
+                if "kb_idx" in entity:
+                    id2wikidata[local_idx] = entity["kb_idx"]
+                local_idx += 1
         json.dump(id2title, open("models/id2title.json", "w"))
         json.dump(id2text, open("models/id2text.json", "w"))
         json.dump(id2wikidata, open("models/id2wikidata.json", "w"))
@@ -863,7 +864,7 @@ if __name__ == "__main__":
         "--num_cand_entities", type=int, default=10, help="Number of entity candidates to consider per mention (at most)"
     )
     parser.add_argument(
-        "--threshold_type", type=str, default=None,
+        "--threshold_type", type=str, default="joint",
         choices=["joint", "top_entity_by_mention"],
         help="How to threshold the final candidates. "
         "`top_entity_by_mention`: get top candidate (with entity score) for each predicted mention bound. "
