@@ -662,7 +662,7 @@ class BiEncoderRanker(torch.nn.Module):
                 -float("inf") if 'logit' in key else 0,
             )
 
-        for idx in range(self.n_gpu):
+        for idx in range(len(context_outs['mention_dims'])):
             # reshape
             gpu_bs = context_outs['mention_dims'][idx, 0]
             b_width = context_outs['mention_dims'][idx, 1]
