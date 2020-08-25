@@ -79,12 +79,12 @@ def _print_colorful_text(input_tokens, tokenizer, pred_triples):
     print("\n" + str(msg) + "\n")
 
 
-def _print_colorful_prediction(all_entity_preds, pred_triples, id2text, id2kb):
+def _print_colorful_prediction(all_entity_preds, pred_triples, id2text, id2wikidata):
     sort_idxs = sorted(range(len(pred_triples)), key=lambda idx: pred_triples[idx][1])
     for idx in sort_idxs:
         print(colored(all_entity_preds[0]['pred_tuples_string'][idx][1], "grey", HIGHLIGHTS[idx % len(HIGHLIGHTS)]))
-        if pred_triples[idx][0] in id2kb:
-            print("    Wikidata ID: {}".format(id2kb[pred_triples[idx][0]]))
+        if pred_triples[idx][0] in id2wikidata:
+            print("    Wikidata ID: {}".format(id2wikidata[pred_triples[idx][0]]))
         print("    Title: {}".format(all_entity_preds[0]['pred_tuples_string'][idx][0]))
         print("    Score: {}".format(str(all_entity_preds[0]['scores'][idx])))
         print("    Triple: {}".format(str(pred_triples[idx])))
@@ -92,7 +92,7 @@ def _print_colorful_prediction(all_entity_preds, pred_triples, id2text, id2kb):
 
 
 def _load_candidates(
-    entity_catalogue, entity_encoding, entity_token_ids,
+    entity_catalogue, entity_encoding,
     faiss_index="none", index_path=None,
     logger=None,
 ):
@@ -116,22 +116,38 @@ def _load_candidates(
         indexer.deserialize_from(index_path)
 
     candidate_encoding = torch.load(entity_encoding)
-    candidate_token_ids = torch.load(entity_token_ids)
     logger.info("Finished loading candidate encodings")
 
-    logger.info("Loading id2title")
-    id2title = json.load(open("models/id2title.json"))
-    logger.info("Finish loading id2title")
-    logger.info("Loading id2text")
-    id2text = json.load(open("models/id2text.json"))
-    logger.info("Finish loading id2text")
-    logger.info("Loading id2kb")
-    id2kb = json.load(open("models/id2kb.json"))
-    logger.info("Finish loading id2kb")
+    if not os.path.exists("models/id2title.json"):
+	id2title = {}
+	id2text = {}
+	id2wikidata = {}
+	local_idx = 0
+	with open(entity_catalogue, "r") as fin:
+	    lines = fin.readlines()
+	    for line in lines:
+		entity = json.loads(line)
+		id2title[local_idx] = entity["title"]
+		id2text[local_idx] = entity["text"]
+                id2wikidata[local_idx] = entity["kb_idx"]
+		local_idx += 1
+        json.dump(id2title, open("models/id2title.json", "w"))
+        json.dump(id2text, open("models/id2text.json", "w"))
+        json.dump(id2wikidata, open("models/id2wikidata.json", "w"))
+    else:
+        logger.info("Loading id2title")
+        id2title = json.load(open("models/id2title.json"))
+        logger.info("Finish loading id2title")
+        logger.info("Loading id2text")
+        id2text = json.load(open("models/id2text.json"))
+        logger.info("Finish loading id2text")
+        logger.info("Loading id2wikidata")
+        id2wikidata = json.load(open("models/id2wikidata.json"))
+        logger.info("Finish loading id2wikidata")
 
     return (
-        candidate_encoding, candidate_token_ids, indexer, 
-        id2title, id2text, id2kb,
+        candidate_encoding, indexer, 
+        id2title, id2text, id2wikidata,
     )
 
 
@@ -634,13 +650,12 @@ def load_models(args, logger):
 
     (
         candidate_encoding,
-        candidate_token_ids,
         indexer,
         id2title,
         id2text,
-        id2kb,
+        id2wikidata,
     ) = _load_candidates(
-        args.entity_catalogue, args.entity_encoding, args.entity_token_ids,
+        args.entity_catalogue, args.entity_encoding,
         args.faiss_index, args.index_path, logger=logger,
     )
 
@@ -648,11 +663,10 @@ def load_models(args, logger):
         biencoder,
         biencoder_params,
         candidate_encoding,
-        candidate_token_ids,
         indexer,
         id2title,
         id2text,
-        id2kb,
+        id2wikidata,
     )
 
 
@@ -662,11 +676,10 @@ def run(
     biencoder,
     biencoder_params,
     candidate_encoding,
-    candidate_token_ids,
     indexer,
     id2title,
     id2text,
-    id2kb,
+    id2wikidata,
 ):
 
     if not args.test_mentions and not args.interactive:
@@ -724,7 +737,7 @@ def run(
 
                 pred_triples = all_entity_preds[0]['pred_triples']
                 _print_colorful_text(all_entity_preds[0]['tokens'], tokenizer, pred_triples)
-                _print_colorful_prediction(all_entity_preds, pred_triples, id2text, id2kb)
+                _print_colorful_prediction(all_entity_preds, pred_triples, id2text, id2wikidata)
                 action = input("Next question [n] / change threshold [c]: ")
                 while action != "n" and action != "c":
                     action = input("Next question [n] / change threshold [c]: ")
@@ -878,13 +891,6 @@ if __name__ == "__main__":
         type=str,
         default="models/entity.jsonl",  # ALL WIKIPEDIA!
         help="Path to the entity catalogue.",
-    )
-    parser.add_argument(
-        "--entity_token_ids",
-        dest="entity_token_ids",
-        type=str,
-        default="models/entity_token_ids_128.t7",  # ALL WIKIPEDIA!
-        help="Path to the tokenized entity titles + descriptions.",
     )
     parser.add_argument(
         "--entity_encoding",
