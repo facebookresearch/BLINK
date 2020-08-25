@@ -93,8 +93,6 @@ def evaluate(
                     num_cand_mentions=50,
                     topK_threshold=-3.5,
                 )
-                import pdb
-                pdb.set_trace()
                 embedding_context = context_outs['mention_reps'].cpu().numpy()
                 pred_mention_mask = context_outs['mention_masks'].cpu().numpy()
                 chosen_mention_bounds = context_outs['mention_bounds'].cpu().numpy()
@@ -124,9 +122,6 @@ def evaluate(
                     tmp_num_g += float(len(gold_triples))
                 text_encs = embedding_context
             else:
-                import pdb
-                pdb.set_trace()
-                embedding_context = None
                 loss, logits, mention_logits, mention_bounds = reranker(
                     context_input, candidate_input,
                     cand_encs=cand_encs,
