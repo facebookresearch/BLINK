@@ -18,7 +18,7 @@
 
 test_questions=$1  # WebQSP_EL/AIDA-YAGO2/graphquestions_EL
 subset=$2  # test/dev/train_only
-model_full=$3  # zero_shot/new_zero_shot/finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
+model_full=$3  # finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
 threshold=$4  # -4.5/-2.9/-inf for no pruning
 top_k=$5  # 50
 threshold_type=$6  # joint / top_entity_by_mention
@@ -71,8 +71,18 @@ then
     model_folder=${MODEL_PARSE[1]}/epoch_${epoch}
 fi
 dir=${model}
-biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
-biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
+if [ ${model} = "finetuned_webqsp" ]
+then
+  biencoder_config=models/elq_large_params.txt
+  biencoder_model=models/elq_webqsp_large.bin
+elif [ ${model} = "wiki_all_ents" ]
+then
+  biencoder_config=models/elq_large_params.txt
+  biencoder_model=models/elq_wiki_large.bin
+else
+  biencoder_config=experiments/${dir}/${MODEL_PARSE[1]}/training_params.txt
+  biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
+fi
 
 if [ "${test_questions}" = "nq" ]
 then

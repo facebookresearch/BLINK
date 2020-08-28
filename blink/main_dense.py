@@ -281,22 +281,71 @@ def _run_biencoder(
     ctxt_idx = 0
     label_ids = None
     for step, batch in enumerate(tqdm(dataloader)):
-        context_input = batch[0].to(device)
-        mask_ctxt = context_input != biencoder.NULL_IDX
+        context_input = batch[0]
         with torch.no_grad():
-            context_outs = biencoder.encode_context(
-                context_input, num_cand_mentions=num_cand_mentions, topK_threshold=threshold
+            token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
+            if device != "cpu":
+                token_idx_ctxt = token_idx_ctxt.to(device)
+                segment_idx_ctxt = segment_idx_ctxt.to(device)
+                mask_ctxt = mask_ctxt.to(device)
+            
+            '''
+            PREPARE INPUTS
+            '''
+            # (bsz, seqlen, embed_dim)
+            context_encoding, _, _ = biencoder_model.context_encoder.bert_model(
+                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
             )
-            embedding_context = context_outs['mention_reps']
-            left_align_mask = context_outs['mention_masks']
-            chosen_mention_logits = context_outs['mention_logits']
-            chosen_mention_bounds = context_outs['mention_bounds']
 
             '''
-            GET TOP CANDIDATES PER MENTION
+            GET MENTION SCORES
             '''
+            # (num_total_mentions,); (num_total_mentions,)
+            mention_logits, mention_bounds = biencoder_model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
+
+            '''
+            PRUNE MENTIONS BASED ON SCORES (for each instance in batch, num_cand_mentions (>= -inf) OR THRESHOLD)
+            '''
+            '''
+            topK_mention_scores, mention_pos = torch.cat([torch.arange(), mention_logits.topk(num_cand_mentions, dim=1)])
+            mention_pos = mention_pos.flatten()
+            '''
+            # DIM (num_total_mentions, embed_dim)
+            # (bsz, num_cand_mentions); (bsz, num_cand_mentions)
+            top_mention_logits, mention_pos = mention_logits.topk(num_cand_mentions, sorted=True)
+            # 2nd part of OR for if nothing is > 0
+            # DIM (bsz, num_cand_mentions, 2)
+            #   [:,:,0]: index of batch
+            #   [:,:,1]: index into top mention in mention_bounds
+            mention_pos = torch.stack([torch.arange(mention_pos.size(0)).to(mention_pos.device).unsqueeze(-1).expand_as(mention_pos), mention_pos], dim=-1)
+            # DIM (bsz, num_cand_mentions)
+            top_mention_pos_mask = torch.sigmoid(top_mention_logits).log() > threshold
+            # DIM (total_possible_mentions, 2)
+            #   tuples of [index of batch, index into mention_bounds] of what mentions to include
+            mention_pos = mention_pos[top_mention_pos_mask | (
+                # If nothing is > threshold, use topK that are > -inf (2nd part of OR)
+                ((top_mention_pos_mask.sum(1) == 0).unsqueeze(-1)) & (top_mention_logits > -float("inf"))
+            )]  #(mention_pos_2_mask.sum(1) == 0).unsqueeze(-1)]
+            mention_pos = mention_pos.view(-1, 2)  #2297 [45,11]
+            # DIM (bs, total_possible_mentions)
+            #   mask of possible logits
+            mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
+            mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
+            # DIM (bs, max_num_pred_mentions, 2)
+            chosen_mention_bounds, left_align_mask = batch_reshape_mask_left(mention_bounds, mention_pos_mask, pad_idx=0)
+            # DIM (bs, max_num_pred_mentions)
+            chosen_mention_logits, _ = batch_reshape_mask_left(mention_logits, mention_pos_mask, pad_idx=-float("inf"), left_align_mask=left_align_mask)
+
+            '''
+            GET CANDIDATE SCORES + TOP CANDIDATES PER MENTION
+            '''
+            # (bs, max_num_pred_mentions, embed_dim)
+            embedding_ctxt = biencoder_model.classification_heads['get_context_embeds'](context_encoding, chosen_mention_bounds)
+            if biencoder_model.linear_compression is not None:
+                embedding_ctxt = biencoder_model.linear_compression(embedding_ctxt)
             # (all_pred_mentions_batch, embed_dim)
-            embedding_ctxt = embedding_context[left_align_mask]
+            embedding_ctxt = embedding_ctxt[left_align_mask]
+
             if indexer is None:
                 try:
                     cand_logits, _, _ = biencoder.score_candidate(
