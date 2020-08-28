@@ -27,23 +27,28 @@ epoch=${12}
 eval_batch_size=${13}
 
 
-echo $3
 export PYTHONPATH=.
 
-# Example to run bi-encoder on zero-shot entity linking data
-# Remove --debug flag to run on full dataset
-# Set --data_parallel to run it on multiple GPUs
-# Increase num_train_epochs to get better models (i.e. 5)
+model_dir="experiments/${data}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${model_size}_${mention_scoring_method}"
 
-if [ "${data}" = "webqsp" ]
+if [ "${data}" = "webqsp" ] || [ "${data}" = "finetune_webqsp" ]
 then
-  data_path="EL4QA_data/WebQSP_EL"
-elif [ "${data}" = "graphqs" ]
+  data_path="EL4QA_data/WebQSP_EL/tokenized"
+elif [ "${data}" = "graphqs" ] || [ "${data}" = "finetune_graphqs" ]
 then
-  data_path="EL4QA_data/graphquestions_EL"
-elif [ "${data}" = "wiki_all_ents" ]
+  data_path="EL4QA_data/graphquestions_EL/tokenized"
+elif [ -d "${data}/tokenized" ]
 then
-  data_path="/checkpoint/belindali/entity_link/data/tokenized"
+  data_path="${data}/tokenized"
+elif [ -d "all_inference_data/${data}" ]
+then
+  data_path="all_inference_data/${data}/tokenized"
+elif [ -d "${data}" ]
+then
+  data_path="${data}"
+else
+  echo "Data not found: ${data}"
+  exit
 fi
 
 if [ "${mention_agg_type}" = "none" ]
@@ -76,16 +81,17 @@ fi
 if [ "${model_size}" = "base" ] || [ "${model_size}" = "large" ]
 then
   model_ckpt="bert-${model_size}-uncased"
-  output_path_model_size=${model_size}
 else
   model_ckpt="/checkpoint/belindali/BERT/${model_size}"
-  output_path_model_size=${model_size}
 fi
 
 if [ "${epoch}" = "" ]
 then
   epoch=-1
 fi
+
+
+echo $3
 
 if [ "${objective}" = "train" ]
 then
@@ -106,10 +112,9 @@ then
   fi
 
   model_path_arg=""
-  output_path="experiments/${data}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
   if [ "${epoch}" != "-1" ]
   then
-    model_path_arg="--path_to_model ${output_path}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${output_path}/epoch_${epoch}/training_state.th"
+    model_path_arg="--path_to_model ${model_dir}/epoch_${epoch}/pytorch_model.bin --path_to_trainer_state ${model_dir}/epoch_${epoch}/training_state.th"
     if [ "${load_saved_cand_encs}" = "true" ]
     then
       cand_enc_args="--freeze_cand_enc --adversarial_training --cand_enc_path models/all_entities_large.t7"
@@ -121,7 +126,7 @@ then
     fi
   fi
   cmd="python blink/biencoder/train_biencoder.py \
-    --output_path $output_path \
+    --output_path ${model_dir} \
     ${model_path_arg} ${cand_enc_args} \
     --title_key entity \
     --data_path ${data_path} \
@@ -140,6 +145,7 @@ then
   $cmd
 fi
 
+
 if [ "${objective}" = "predict" ]
 then
   if [ "${chunk_start}" = "" ]
@@ -153,11 +159,9 @@ then
   
   echo $data
 
-  model_dir=experiments/${data}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}
-
   model_config=${model_dir}/training_params.txt
   model_path=${model_dir}/epoch_${epoch}/pytorch_model.bin
-  save_dir=${model_path}/entity_encodings
+  save_dir=${model_dir}/epoch_${epoch}/entity_encodings
   mkdir -p save_dir
   chmod 777 save_dir
 

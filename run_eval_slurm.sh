@@ -32,8 +32,6 @@ export PYTHONPATH=.
 
 IFS=';' read -ra MODEL_PARSE <<< "${model_full}"
 model=${MODEL_PARSE[0]}
-echo $model
-echo $model_full
 
 if [ "${eval_batch_size}" = "" ]
 then
@@ -45,14 +43,19 @@ then
     save_dir_batch="_realtime_test"
 fi
 
-mentions_file="EL4QA_data/${test_questions}/tokenized/${subset}.jsonl"
+if [[ -d "EL4QA_data/${test_questions}" ]]
+then
+    mentions_file="EL4QA_data/${test_questions}/tokenized/${subset}.jsonl"
+elif [[ -d "all_data/${test_questions}" ]]
+then
+    mentions_file="all_inference_data/${test_questions}/tokenized/${subset}.jsonl"
+fi
 
 threshold_args="--threshold=${threshold} --threshold_type ${threshold_type} "
 if [[ ${threshold_type} = "top_entity_by_mention" ]]
 then
     threshold_args="${threshold_args} --mention_threshold -0.6931"
 fi
-echo $threshold_args
 
 if [ "${gpu}" = "false" ]
 then
@@ -62,9 +65,7 @@ else
 fi
 
 model_folder=${MODEL_PARSE[1]}
-echo ${model_folder}
-echo ${MODEL_PARSE[1]}
-epoch=${MODEL_PARSE[2]}  # 9
+epoch=${MODEL_PARSE[2]}
 if [[ $epoch != "" ]]
 then
     model_folder=${MODEL_PARSE[1]}/epoch_${epoch}
@@ -85,7 +86,7 @@ if [ "${use_custom_entity_encoding}" != "true" ]
 then
     entity_encoding=models/all_entities_large.t7
 else
-    entity_encoding=experiments/${dir}/${model_folder}/entity_encoding/al.t7
+    entity_encoding=experiments/${dir}/${model_folder}/entity_encoding/all.t7
 fi
 echo ${mentions_file}
 

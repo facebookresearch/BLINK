@@ -240,7 +240,6 @@ def main(params):
     logger.info("Finished reading all train samples")
 
     # Load eval data
-    # TODO: reduce duplicated code here
     valid_samples = utils.read_dataset("valid", params["data_path"])
     valid_subset = 1024
     logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
@@ -271,7 +270,7 @@ def main(params):
     cand_encs = None
     cand_encs_index = None
     if params["freeze_cand_enc"]:
-        cand_encs = torch.load(params['cand_enc_path'])  # TODO DONT HARDCODE THESE PATHS
+        cand_encs = torch.load(params['cand_enc_path'])
         logger.info("Loaded saved entity encodings")
         if params["debug"]:
             cand_encs = cand_encs[:200]

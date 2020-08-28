@@ -11,20 +11,15 @@
 #SBATCH --time 3000
 #SBATCH --constraint=volta32gb
 
-# bash run_slurm.sh pretrain all_avg true 128 60
-# bash run_slurm.sh wiki_all_ents all_avg true 128 false false large 2
-# bash run_slurm.sh wiki_all_ents all_avg true 128 false false base 10
 data=$1  # wiki_all_ents/webqsp_all_ents/zeshel/pretrain/zero_shot (ledell's model)
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none
-joint_mention_detection=$3  # "true"/false
-context_length=$4  # 16/128
-load_saved_cand_encs=$5  # "true"/false
-adversarial=$6
-model_size=$7
-latest_epoch=$8
+context_length=$3  # 16/128
+load_saved_cand_encs=$4  # "true"/false
+adversarial=$5
+model_size=$6
+latest_epoch=$7
 
 save_dir="models/entity_encodings/${data}_${mention_agg_type}_${joint_mention_detection}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${output_path_model_size}_${mention_scoring_method}"
-# save_dir="models/entity_encodings/${data}_${mention_agg_type}_biencoder_${joint_mention_detection}_${context_length}_${latest_epoch}"
 
 for i in {0..5}
 do
@@ -33,10 +28,9 @@ do
     if [ ! -f "${save_dir}/${start}_${end}.t7" ]
     then
         echo ${data} ${mention_agg_type} ${start}
-        sbatch examples/train_biencoder.sh \
+        sbatch train_biencoder.sh \
             ${data} ${mention_agg_type} predict 512 \
-            ${joint_mention_detection} ${context_length} \
-            ${load_saved_cand_encs} ${adversarial} \
+            ${context_length} ${load_saved_cand_encs} ${adversarial} \
             ${model_size} qa_linear ${start} ${end} ${latest_epoch}
     fi
 done
