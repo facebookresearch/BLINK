@@ -67,7 +67,7 @@ experiments/webqsp_all_ents/all_mention_biencoder_all_avg_128_true_true_bert_lar
 
 ### Train on Wikipedia
 ```console
-sbatch train_biencoder.sh wiki_all_ents all_avg train 32 128 true true large qa_linear 0 -1 22 64
+sbatch train_biencoder.sh /checkpoint/belindali/entity_link/data/wiki_all_ents all_avg train 32 128 true true large qa_linear 0 -1 22 64
 sbatch train_biencoder.sh wiki_all_ents all_avg train 32 128 false false large qa_linear 0 -1 3 64
 sbatch train_biencoder.sh wiki_all_ents all_avg train 32 128 false false base qa_linear 0 -1 10 64
 ```

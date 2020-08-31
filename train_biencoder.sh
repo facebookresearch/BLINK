@@ -29,7 +29,8 @@ eval_batch_size=${13}
 
 export PYTHONPATH=.
 
-model_dir="experiments/${data}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${model_size}_${mention_scoring_method}"
+save_dataname=${data##*/}
+model_dir="experiments/${save_dataname}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${model_size}_${mention_scoring_method}"
 
 if [ "${data}" = "webqsp" ] || [ "${data}" = "finetune_webqsp" ]
 then
@@ -37,12 +38,12 @@ then
 elif [ "${data}" = "graphqs" ] || [ "${data}" = "finetune_graphqs" ]
 then
   data_path="EL4QA_data/graphquestions_EL/tokenized"
-elif [ -d "${data}/tokenized" ]
-then
-  data_path="${data}/tokenized"
 elif [ -d "all_inference_data/${data}" ]
 then
   data_path="all_inference_data/${data}/tokenized"
+elif [ -d "${data}/tokenized" ]
+then
+  data_path="${data}/tokenized"
 elif [ -d "${data}" ]
 then
   data_path="${data}"
