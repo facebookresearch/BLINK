@@ -280,88 +280,17 @@ def _run_biencoder(
     sample_idx = 0
     ctxt_idx = 0
     label_ids = None
-    all_times = {'forward_new': [], 'conversion_new': [], 'forward_old': [], 'times_new': [], 'times_old': []}
     for step, batch in enumerate(tqdm(dataloader)):
         context_input = batch[0].to(device)
         mask_ctxt = context_input != biencoder.NULL_IDX
         with torch.no_grad():
-            context_outs, forward_time, conversion_time = biencoder.encode_context(
+            context_outs = biencoder.encode_context(
                 context_input, num_cand_mentions=num_cand_mentions, topK_threshold=threshold
             )
-            all_times['forward_new'].append(forward_time)
-            all_times['conversion_new'].append(conversion_time)
             embedding_ctxt = context_outs['mention_reps']
             left_align_mask = context_outs['mention_masks']
             chosen_mention_logits = context_outs['mention_logits']
             chosen_mention_bounds = context_outs['mention_bounds']
-
-            # SECTION
-            start = time.time()
-            token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(context_input, biencoder.NULL_IDX)
-            
-            '''
-            PREPARE INPUTS
-            '''
-            c1 = time.time()
-            # (bsz, seqlen, embed_dim)
-            context_encoding, _, _ = biencoder_model.context_encoder.bert_model(
-                token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
-            )
-            c2 = time.time()
-
-            '''
-            GET MENTION SCORES
-            '''
-            # (num_total_mentions,); (num_total_mentions,)
-            mention_logits, mention_bounds = biencoder_model.classification_heads['mention_scores'](context_encoding, mask_ctxt)
-            c3 = time.time()
-
-            '''
-            PRUNE MENTIONS BASED ON SCORES (for each instance in batch, num_cand_mentions (>= -inf) OR THRESHOLD)
-            '''
-            '''
-            topK_mention_scores, mention_pos = torch.cat([torch.arange(), mention_logits.topk(num_cand_mentions, dim=1)])
-            mention_pos = mention_pos.flatten()
-            '''
-            # DIM (num_total_mentions, embed_dim)
-            # (bsz, num_cand_mentions); (bsz, num_cand_mentions)
-            top_mention_logits, mention_pos = mention_logits.topk(num_cand_mentions, sorted=True)
-            # 2nd part of OR for if nothing is > 0
-            # DIM (bsz, num_cand_mentions, 2)
-            #   [:,:,0]: index of batch
-            #   [:,:,1]: index into top mention in mention_bounds
-            mention_pos = torch.stack([torch.arange(mention_pos.size(0)).to(mention_pos.device).unsqueeze(-1).expand_as(mention_pos), mention_pos], dim=-1)
-            # DIM (bsz, num_cand_mentions)
-            top_mention_pos_mask = torch.sigmoid(top_mention_logits).log() > threshold
-            # DIM (total_possible_mentions, 2)
-            #   tuples of [index of batch, index into mention_bounds] of what mentions to include
-            mention_pos = mention_pos[top_mention_pos_mask | (
-                # If nothing is > threshold, use topK that are > -inf (2nd part of OR)
-                ((top_mention_pos_mask.sum(1) == 0).unsqueeze(-1)) & (top_mention_logits > -float("inf"))
-            )]  #(mention_pos_2_mask.sum(1) == 0).unsqueeze(-1)]
-            mention_pos = mention_pos.view(-1, 2)  #2297 [45,11]
-            # DIM (bs, total_possible_mentions)
-            #   mask of possible logits
-            mention_pos_mask = torch.zeros(mention_logits.size(), dtype=torch.bool).to(mention_pos.device)
-            mention_pos_mask[mention_pos[:,0], mention_pos[:,1]] = 1
-            # DIM (bs, max_num_pred_mentions, 2)
-            chosen_mention_bounds, left_align_mask = batch_reshape_mask_left(mention_bounds, mention_pos_mask, pad_idx=0)
-            # DIM (bs, max_num_pred_mentions)
-            chosen_mention_logits, _ = batch_reshape_mask_left(mention_logits, mention_pos_mask, pad_idx=-float("inf"), left_align_mask=left_align_mask)
-            c4 = time.time()
-
-            '''
-            GET CANDIDATE SCORES + TOP CANDIDATES PER MENTION
-            '''
-            # (bs, max_num_pred_mentions, embed_dim)
-            embedding_ctxt = biencoder_model.classification_heads['get_context_embeds'](context_encoding, chosen_mention_bounds)
-            if biencoder_model.linear_compression is not None:
-                embedding_ctxt = biencoder_model.linear_compression(embedding_ctxt)
-            
-            c5 = time.time()
-
-            end = time.time()
-            all_times['forward_old'].append([c1,c2,c3,c4,c5])
 
             '''
             GET TOP CANDIDATES PER MENTION
@@ -422,18 +351,6 @@ def _run_biencoder(
                 top_cand_indices_shape.device, top_cand_indices_shape.dtype)
             top_cand_indices[left_align_mask] = top_cand_indices_shape
 
-            c6 = time.time()
-            all_times['times_new'].append([])
-            all_times['times_old'].append([])
-            # take differences
-            for i in range(len(all_times['forward_new'][-1])):
-                if i == len(all_times['forward_new'][-1])-1:
-                    all_times['times_new'][-1].append(c6-c5)
-                    all_times['times_old'][-1].append(c6-c5)
-                else:
-                    all_times['times_new'][-1].append(all_times['forward_new'][-1][i+1] - all_times['forward_new'][-1][i])
-                    all_times['times_old'][-1].append(all_times['forward_old'][-1][i+1] - all_times['forward_old'][-1][i])
-
             '''
             COMPUTE FINAL SCORES FOR EACH CAND-MENTION PAIR + PRUNE USING IT
             '''
@@ -459,19 +376,6 @@ def _run_biencoder(
                 mention_scores.append(chosen_mention_logits[idx][left_align_mask[idx]].data.cpu().numpy())
                 # [(max_num_mentions, cands_per_mention) x exs] <= (bsz, max_num_mentions=num_cand_mentions, cands_per_mention)
                 cand_scores.append(top_cand_logits[idx][left_align_mask[idx]].data.cpu().numpy())
-
-    # average across all_times
-    avg_times_new = all_times['times_new'][0]
-    avg_times_old = all_times['times_old'][0]
-    for i in range(1,len(all_times['times_new'])):
-        avg_times_new = [el + all_times['times_new'][i][j] for j, el in enumerate(avg_times_new)]
-        avg_times_old = [el + all_times['times_old'][i][j] for j, el in enumerate(avg_times_old)]
-    avg_times_new = [float(el) / len(all_times['times_new']) for el in avg_times_new]
-    avg_times_old = [float(el) / len(all_times['times_new']) for el in avg_times_old]
-    logger.info("Old runtimes: " + str(avg_times_old))
-    logger.info("New runtimes: " + str(avg_times_new))
-    import pdb
-    pdb.set_trace()
 
     return nns, dists, pred_mention_bounds, mention_scores, cand_scores
 

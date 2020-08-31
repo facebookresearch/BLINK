@@ -6,7 +6,6 @@
 #
 import os
 import numpy as np
-import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -421,12 +420,10 @@ class BiEncoderModule(torch.nn.Module):
             '''
             NEW system: aggregate mention tokens
             '''
-            c1 = time.time()
             # (bs, seqlen, embed_size)
             raw_ctxt_encoding = self.get_raw_ctxt_encoding(
                 token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
             )
-            c2 = time.time()
 
             top_mention_bounds = None
             top_mention_logits = None
@@ -437,7 +434,6 @@ class BiEncoderModule(torch.nn.Module):
                 )
                 extra_rets['all_mention_logits'] = mention_logits
                 extra_rets['all_mention_bounds'] = mention_bounds
-                c3 = time.time()
                 if gold_mention_bounds is None:
                     (
                         top_mention_logits, top_mention_bounds, top_mention_mask, all_mention_mask,
@@ -446,7 +442,6 @@ class BiEncoderModule(torch.nn.Module):
                     )
                     extra_rets['mention_logits'] = top_mention_logits.view(-1)
                     extra_rets['all_mention_mask'] = all_mention_mask
-                    c4 = time.time()
 
             if top_mention_bounds is None:
                 # use gold mention
@@ -460,8 +455,6 @@ class BiEncoderModule(torch.nn.Module):
             embedding_ctxt = self.get_ctxt_embeds(
                 raw_ctxt_encoding, top_mention_bounds,
             )
-            c5 = time.time()
-            extra_rets['times'] = [c1,c2,c3,c4,c5]
             # for merging dataparallel, only 1st dimension can differ...
             return {
                 "mention_reps": embedding_ctxt.view(-1, embedding_ctxt.size(-1)),
@@ -512,14 +505,11 @@ class BiEncoderModule(torch.nn.Module):
         context_outs = None
         cand_outs = None
         if token_idx_ctxt is not None:
-            start_time = time.time()
             context_outs = self.forward_ctxt(
                 token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
                 gold_mention_bounds, gold_mention_bounds_mask, num_cand_mentions, topK_threshold,
                 get_mention_scores,
             )
-            end_time = time.time()
-            context_outs['time'] = end_time - start_time
         if token_idx_cands is not None:
             cand_outs = self.forward_candidate(
                 token_idx_cands, segment_idx_cands, mask_cands
@@ -650,13 +640,11 @@ class BiEncoderRanker(torch.nn.Module):
             get_mention_scores=get_mention_scores
         )
         if context_outs['mention_dims'].size(0) <= 1:
-            start = time.time()
             for key in context_outs:
-                if 'all' in key or key == 'mention_dims' or 'time' in key:
+                if 'all' in key or key == 'mention_dims':
                     continue
                 context_outs[key] = context_outs[key].view([context_outs['mention_dims'][0,0], -1] + list(context_outs[key].size()[1:]))
-            end = time.time()
-            return context_outs, context_outs['times'], end - start
+            return context_outs
 
         '''
         Reshape to (bs, num_mentions, *), iterating across GPUs
