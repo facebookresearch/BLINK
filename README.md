@@ -6,6 +6,7 @@ Data can be found in:
 - Entity linking data is under http://dl.fbaipublicfiles.com/elq/EL4QA_data.tar.gz.
 - All preprocessed inference data (AIDA-YAGO2/nq/triviaqa/WebQuestions) is under http://dl.fbaipublicfiles.com/elq/all_inference_data.tar.gz
 - All preprocessed wikipedia pretraining data is under http://dl.fbaipublicfiles.com/elq/wiki_all_ents.tar.gz
+    - WARNING: LARGE!!!
 - [FB Internal] Data under `/checkpoint/belindali/entity_link/data/*/tokenized`.
 
 The FAISS indices are under:
@@ -129,6 +130,12 @@ Wiki train (e49; HNSW) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | 43.32 
 Pretrain Wiki, Finetune WebQSP | GraphQuestions test | 0.7533 | 0.6686 | 0.7084 | ? |
 Pretrain Wiki, Finetune WebQSP (HNSW index) | GraphQuestions test | 0.7467 | 0.6641 | 0.7030 | 51.50 |
 Wiki train (e23) | AIDA-YAGO2 test(?) | 0.7069 | 0.6952 | 0.7010 | ? |
+
+Timing info for FAISS search vs. biencoder forward run:
+(Pretrain Wiki, Fineetune WebQSP on WebQSP test)
+* bsz 64 (80 CPUs): forward pass = 10.31s, FAISS search = 0.3123s
+* bsz 1 (80 CPUs): forward pass = 0.1636s, FAISS search = 0.0381s 
+
 
 TODO: make training adversarial selection stricter?
 
