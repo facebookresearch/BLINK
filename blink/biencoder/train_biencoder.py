@@ -257,6 +257,7 @@ def main(params):
         debug=params["debug"],
         add_mention_bounds=(not args.no_mention_bounds),
         candidate_token_ids=None,
+        get_entity_descriptions=(not params["freeze_cand_enc"]),
         # saved_context_dir=os.path.join(tokenized_contexts_dir, "valid"),
     )
     candidate_token_ids = extra_ret_values["candidate_token_ids"]
@@ -318,6 +319,7 @@ def main(params):
             add_mention_bounds=(not args.no_mention_bounds),
             # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
             candidate_token_ids=candidate_token_ids,
+            get_entity_descriptions=(not params["freeze_cand_enc"]),
         )
         logger.info("Finished preparing training data")
     else:
@@ -363,6 +365,7 @@ def main(params):
                 add_mention_bounds=(not args.no_mention_bounds),
                 # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
                 candidate_token_ids=candidate_token_ids,
+                get_entity_descriptions=(not params["freeze_cand_enc"]),
             )
             logger.info("Finished preparing training data for epoch {}: {} samples".format(epoch_idx, len(train_tensor_data_tuple[0])))
     

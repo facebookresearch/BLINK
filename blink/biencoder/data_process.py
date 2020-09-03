@@ -501,6 +501,7 @@ def process_mention_data(
     add_mention_bounds=True,  # TODO change
     saved_context_dir=None,
     candidate_token_ids=None,
+    get_entity_descriptions=True,
 ):
     '''
     Returns /inclusive/ bounds
@@ -585,13 +586,16 @@ def process_mention_data(
                 "tokens": "",
                 "ids": token_ids,
             }
-        else:
+        elif get_entity_descriptions:
             label_tokens = [get_candidate_representation(
                 l, tokenizer, max_cand_length, title[i],
             ) for i, l in enumerate(label)]
             label_tokens = {
                 k: [label_tokens[l][k] for l in range(len(label_tokens))]
             for k in label_tokens[0]}
+        else:
+            label_tokens = None
+
         if isinstance(sample["label_id"], list):
             # multiple candidates
             if len(sample["label_id"]) > len(context_tokens['mention_idxs']):
@@ -602,17 +606,12 @@ def process_mention_data(
             assert isinstance(sample["label_id"], int) or isinstance(sample["label_id"], str)
             label_idx = int(sample["label_id"])
 
-        try:
-            assert len(context_tokens['mention_idxs']) == len(label_tokens['ids'])
-            assert len(label_tokens['ids']) == len(label_idx)
-        except:
-            import pdb
-            pdb.set_trace()
         record = {
             "context": context_tokens,
-            "label": label_tokens,
-            "label_idx": label_idx,
         }
+        if get_entity_descriptions:
+            record["label"] = label_tokens
+        record["label_idx"] = label_idx
 
         if "world" in sample:
             src = sample["world"]
@@ -634,13 +633,14 @@ def process_mention_data(
             logger.info(
                 "Context ids : " + " ".join([str(v) for v in sample["context"]["ids"]])
             )
-            logger.info("Label tokens : " + " ".join(sample["label"]["tokens"]))
-            logger.info(
-                "Label ids : " + " ".join([str(v) for v in sample["label"]["ids"]])
-            )
+            if get_entity_descriptions:
+                logger.info("Label tokens : " + " ".join(sample["label"]["tokens"]))
+                logger.info(
+                    "Label ids : " + " ".join([str(v) for v in sample["label"]["ids"]])
+                )
+            logger.info("Label_id : %d" % sample["label_idx"])
             if use_world:
                 logger.info("Src : %d" % sample["src"][0])
-            logger.info("Label_id : %d" % sample["label_idx"])
 
     context_vecs = torch.tensor(
         select_field(processed_samples, "context", "ids"), dtype=torch.long,
@@ -655,12 +655,12 @@ def process_mention_data(
         if logger:
             logger.info("Created mention positions vector")
 
-        cand_vecs = torch.tensor(
-            select_field(processed_samples, "label", "ids"), dtype=torch.long,
-        )
-        if logger:
-            logger.info("Created candidate IDs vector")
-
+        if get_entity_descriptions:
+            cand_vecs = torch.tensor(
+                select_field(processed_samples, "label", "ids"), dtype=torch.long,
+            )
+            if logger:
+                logger.info("Created candidate IDs vector")
         label_idx = torch.tensor(
             select_field(processed_samples, "label_idx"), dtype=torch.long,
         ).unsqueeze(-1)
@@ -675,15 +675,18 @@ def process_mention_data(
         # (bs, max_num_spans)
         mention_idx_mask = torch.tensor(mention_idx_mask, dtype=torch.bool)
 
-        cand_vecs, cand_mask = select_field_with_padding(
-            processed_samples, "label", "ids", pad_idx=[[0 for _ in range(max_cand_length)]],
-        )
-        # (bs, max_num_spans, 1, max_cand_length)
-        cand_vecs = torch.tensor(cand_vecs, dtype=torch.long)
-        cand_mask = torch.tensor(cand_mask, dtype=torch.bool)
-        assert (cand_mask == mention_idx_mask).all() or cand_mask.all()
-        if logger:
-            logger.info("Created candidate IDs vector")
+        if get_entity_descriptions:
+            cand_vecs, cand_mask = select_field_with_padding(
+                processed_samples, "label", "ids", pad_idx=[[0 for _ in range(max_cand_length)]],
+            )
+            # (bs, max_num_spans, 1, max_cand_length)
+            cand_vecs = torch.tensor(cand_vecs, dtype=torch.long)
+            cand_mask = torch.tensor(cand_mask, dtype=torch.bool)
+            assert (cand_mask == mention_idx_mask).all() or cand_mask.all()
+            if logger:
+                logger.info("Created candidate IDs vector")
+        else:
+            cand_vecs = torch.Tensor(context_vecs.size())
 
         label_idx_vecs, label_idx_mask = select_field_with_padding(processed_samples, "label_idx", pad_idx=-1)
         # (bs, max_num_spans)
