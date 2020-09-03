@@ -29,8 +29,8 @@ eval_batch_size=${13}
 
 export PYTHONPATH=.
 
-save_dataname=${data##*/}
-model_dir="experiments/${save_dataname}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${model_size}_${mention_scoring_method}"
+data_type=${data##*/}
+model_dir="experiments/${data_type}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${model_size}_${mention_scoring_method}"
 
 if [ "${data}" = "webqsp" ] || [ "${data}" = "finetune_webqsp" ]
 then
@@ -98,7 +98,7 @@ if [ "${objective}" = "train" ]
 then
   echo "Running ${mention_agg_type} biencoder training on ${data} dataset."
   distribute_train_samples_arg=""
-  if [ "${data}" != "wiki_all_ents" ]
+  if [ "${data_type}" != "wiki_all_ents" ]
   then
     distribute_train_samples_arg="--dont_distribute_train_samples"
   fi
@@ -158,7 +158,7 @@ then
     chunk_end="1000000"
   fi
   
-  echo $data
+  echo ${data_type}
 
   model_config=${model_dir}/training_params.txt
   model_path=${model_dir}/epoch_${epoch}/pytorch_model.bin
@@ -178,7 +178,7 @@ then
     cp ${model_path} ${save_dir}/pytorch_model.bin
   fi
 
-  echo "Getting ${mention_agg_type}_${data} biencoder candidates on wikipedia entities."
+  echo "Getting ${mention_agg_type}_${data_type} biencoder candidates on wikipedia entities."
   cmd="python scripts/generate_candidates.py \
       --path_to_model_config ${model_config} \
       --path_to_model ${model_path} \
