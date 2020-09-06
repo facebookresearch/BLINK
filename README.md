@@ -92,9 +92,9 @@ Saves under `experiments/wiki_all_ents/all_avg_128_false_false_bert_base_qa_line
 ## Evaluation
 Zero-shot from Wikipedia
 ```console
-CUDA_VISIBLE_DEVICES=0 bash run_eval_slurm.sh WebQSP_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;49' -2.9 50 joint
+CUDA_VISIBLE_DEVICES=0 bash run_eval_slurm.sh WebQSP_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;97' -2.9 50 joint
 
-CUDA_VISIBLE_DEVICES=1 bash run_eval_slurm.sh graphquestions_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;49' -2.9 50 joint
+CUDA_VISIBLE_DEVICES=1 bash run_eval_slurm.sh graphquestions_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;97' -2.9 50 joint
 ```
 
 Pretrain on Wikipedia, finetuned on WebQSP
@@ -119,11 +119,11 @@ The following table summarizes the performance of BLINK for the considered datas
 model | dataset | biencoder precision | biencoder recall | biencoder F1 | runtime (s), bsz=64, bsz=1 (1CPU), bsz=1 (80CPU) |
 ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
 WebQSP train | WebQSP test | 0.8999 | 0.8498 | 0.8741 | 183.4 |
-Wiki train (e49; HNSW) | WebQSP test | 0.8607 | 0.8181 | 0.8389 | 33.53 |
+Wiki train (e97; HNSW) | WebQSP test | 0.8607 | 0.8181 | 0.8389 | 33.53 |
 Pretrain Wiki, Finetune WebQSP | WebQSP test | 0.9170 | 0.8788 | 0.8975 | ? |
 Pretrain Wiki, Finetune WebQSP (HNSW index) | WebQSP test | 0.9098 | 0.8704 | 0.8897 | 26.43, 2429.3, 345.2 |
 WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
-Wiki train (e49; HNSW) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | 43.32 |
+Wiki train (e47; HNSW) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | 43.32 |
 Pretrain Wiki, Finetune WebQSP | GraphQuestions test | 0.7533 | 0.6686 | 0.7084 | ? |
 Pretrain Wiki, Finetune WebQSP (HNSW index) | GraphQuestions test | 0.7467 | 0.6641 | 0.7030 | 51.50 |
 Wiki train (e23) | AIDA-YAGO2 test(?) | 0.7069 | 0.6952 | 0.7010 | ? |
