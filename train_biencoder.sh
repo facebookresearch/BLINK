@@ -55,10 +55,10 @@ elif [[ -d "${data}" ]]
 then
   data_path="${data}"
 # starts with webqsp or graphqs
-elif [[ ${data} ~= ^[webqsp] ]]
+elif [[ "${data}" = "webqsp" ]]
 then
   data_path="EL4QA_data/WebQSP_EL/tokenized"
-elif [[ ${data} ~= ^[graphqs] ]]
+elif [[ "${data}" = "graphqs" ]]
 then
   data_path="EL4QA_data/graphquestions_EL/tokenized"
 # in inference subdirectory

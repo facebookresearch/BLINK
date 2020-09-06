@@ -240,7 +240,10 @@ def main(params):
     logger.info("Finished reading all train samples")
 
     # Load eval data
-    valid_samples = utils.read_dataset("valid", params["data_path"])
+    try:
+        valid_samples = utils.read_dataset("valid", params["data_path"])
+    except FileNotFoundError:
+        valid_samples = utils.read_dataset("dev", params["data_path"])
     valid_subset = 1024
     logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
 
