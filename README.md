@@ -106,7 +106,7 @@ bash run_eval_slurm.sh graphquestions_EL $split 'finetuned_webqsp;all_avg_128_tr
 
 Run something on CPUs:
 ```console
-srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_slurm.sh nq ${split} 'finetuned_webqsp;all_mention_biencoder_all_avg_20_true_true_bert_large_qa_linear' -4.5 50 joint 16
+srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_slurm.sh nq ${split} 'finetuned_webqsp;all_mention_biencoder_all_avg_20_true_true_bert_large_qa_linear' -4.5 50 joint 16 false false
 ```
 
 For Wiki-trained, best threshold is `TODO` (-2.9) for WebQSP, `TODO` (-2.9) for graphquestions, -3.5 for AIDA-YAGO.
