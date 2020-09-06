@@ -12,9 +12,9 @@
 #SBATCH --time 3000
 #SBATCH --constraint=volta32gb
 
-data=$1  # webqsp/graphqs/wiki_all_ents
+data=$1  # webqsp/graphqs/wiki_all_ents/custom full(!) filepath
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none/none_no_mentions
-objective=$3  # train/predict
+objective=$3  # train/finetune/predict
 batch_size=$4  # 128 (for pretraining large model / 128 seqlen) / 32 (for finetuning w/ adversaries / 16 seqlen)
 context_length=$5  # 128/20 (smallest)
 load_saved_cand_encs=$6  # true/false
@@ -25,28 +25,46 @@ chunk_start=${10}
 chunk_end=${11}
 epoch=${12}
 eval_batch_size=${13}
+base_data=${14}  # if finetune
+base_epoch=${15}  # if finetune
 
 
 export PYTHONPATH=.
 
 data_type=${data##*/}
+base_data_type=${base_data##*/}
+if [[ $objective = "finetune" ]]
+then
+    data_type="${data_type}_ft_${base_data_type}_${base_epoch}"
+fi
 model_dir="experiments/${data_type}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${model_size}_${mention_scoring_method}"
+if [ $objective = "finetune" ] && [ ! -d "${model_dir}/epoch_0" ]
+then
+    mkdir -p ${model_dir}
+    base_model_dir="experiments/${base_data_type}/${mention_agg_type}_${context_length}_${load_saved_cand_encs}_${adversarial}_bert_${model_size}_${mention_scoring_method}"
+    cp -rf ${base_model_dir}/epoch_${base_epoch} ${model_dir}/epoch_0
+    rm ${model_dir}/epoch_0/training_state.th
+    epoch=0
+fi
 
-if [ "${data}" = "webqsp" ] || [ "${data}" = "finetune_webqsp" ]
-then
-  data_path="EL4QA_data/WebQSP_EL/tokenized"
-elif [ "${data}" = "graphqs" ] || [ "${data}" = "finetune_graphqs" ]
-then
-  data_path="EL4QA_data/graphquestions_EL/tokenized"
-elif [ -d "all_inference_data/${data}" ]
-then
-  data_path="all_inference_data/${data}/tokenized"
-elif [ -d "${data}/tokenized" ]
+# passed in a full file path at this point
+if [[ -d "${data}/tokenized" ]]
 then
   data_path="${data}/tokenized"
-elif [ -d "${data}" ]
+elif [[ -d "${data}" ]]
 then
   data_path="${data}"
+# starts with webqsp or graphqs
+elif [[ ${data} ~= ^[webqsp] ]]
+then
+  data_path="EL4QA_data/WebQSP_EL/tokenized"
+elif [[ ${data} ~= ^[graphqs] ]]
+then
+  data_path="EL4QA_data/graphquestions_EL/tokenized"
+# in inference subdirectory
+elif [[ -d "all_inference_data/${data}" ]]
+then
+  data_path="all_inference_data/${data}/tokenized"
 else
   echo "Data not found: ${data}"
   exit
@@ -94,7 +112,7 @@ fi
 
 echo $3
 
-if [ "${objective}" = "train" ]
+if [ "${objective}" = "train" ] || [ "${objective}" = "finetune" ]
 then
   echo "Running ${mention_agg_type} biencoder training on ${data} dataset."
   distribute_train_samples_arg=""
@@ -103,11 +121,11 @@ then
     distribute_train_samples_arg="--dont_distribute_train_samples"
   fi
 
-  if [ "${batch_size}" = "" ]
+  if [ "${batch_size}" = "" ] || [ "${batch_size}" = "_" ]
   then
     batch_size="32"
   fi
-  if [ "${eval_batch_size}" = "" ]
+  if [ "${eval_batch_size}" = "" ] || [ "${eval_batch_size}" = "_" ]
   then
     eval_batch_size="32"
   fi
