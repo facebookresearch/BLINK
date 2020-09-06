@@ -30,8 +30,6 @@ output_dir="/checkpoint/${USER}/entity_link/saved_preds"
 
 export PYTHONPATH=.
 
-IFS=';' read -ra MODEL_PARSE <<< "${model_full}"
-model=${MODEL_PARSE[0]}
 
 if [ "${eval_batch_size}" = "" ]
 then
@@ -46,9 +44,12 @@ fi
 if [[ -d "EL4QA_data/${test_questions}" ]]
 then
     mentions_file="EL4QA_data/${test_questions}/tokenized/${subset}.jsonl"
-elif [[ -d "all_data/${test_questions}" ]]
+elif [[ -d "all_inference_data/${test_questions}" ]]
 then
     mentions_file="all_inference_data/${test_questions}/tokenized/${subset}.jsonl"
+else
+    echo "mentions files ${test_questions} not found under `EL4QA_data` or `all_inference_data`"
+    exit
 fi
 
 threshold_args="--threshold=${threshold} --threshold_type ${threshold_type} "
@@ -64,18 +65,19 @@ else
     cuda_args="--use_cuda"
 fi
 
+IFS=';' read -ra MODEL_PARSE <<< "${model_full}"
 model_folder=${MODEL_PARSE[1]}
 epoch=${MODEL_PARSE[2]}
 if [[ $epoch != "" ]]
 then
     model_folder=${MODEL_PARSE[1]}/epoch_${epoch}
 fi
-dir=${model}
-if [ ${model} = "finetuned_webqsp" ]
+dir=${MODEL_PARSE[0]}
+if [[ ${model} = "finetuned_webqsp" ]]
 then
   biencoder_config=models/elq_large_params.txt
   biencoder_model=models/elq_webqsp_large.bin
-elif [ ${model} = "wiki_all_ents" ]
+elif [[ ${model} = "wiki_all_ents" ]]
 then
   biencoder_config=models/elq_large_params.txt
   biencoder_model=models/elq_wiki_large.bin
@@ -84,15 +86,15 @@ else
   biencoder_model=experiments/${dir}/${model_folder}/pytorch_model.bin
 fi
 
-if [ "${test_questions}" = "nq" ]
+if [[ "${test_questions}" = "nq" ]]
 then
     max_context_length_args="--max_context_length 32"
-elif [ "${test_questions}" = "triviaqa" ]
+elif [[ "${test_questions}" = "triviaqa" ]]
 then
     max_context_length_args="--max_context_length 256"
 fi
 
-if [ "${use_custom_entity_encoding}" != "true" ]
+if [[ "${use_custom_entity_encoding}" != "true" ]]
 then
     entity_encoding=models/all_entities_large.t7
 else
