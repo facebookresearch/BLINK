@@ -69,11 +69,11 @@ experiments/wiki_all_ents/all_avg_128_false_false_bert_base_qa_linear
 
 ### Finetune on WebQSP
 ```console
-sbatch train_biencoder.sh webqsp all_avg finetune 32 128 true true large qa_linear 0 -1 0 64 /checkpoint/belindali/entity_link/data/wiki_all_ents 98
+sbatch train_biencoder.sh webqsp all_avg finetune 32 128 true true large qa_linear 0 -1 0 64 /checkpoint/belindali/entity_link/data/wiki_all_ents ${base_epoch}
 ```
 Saves under
 ```
-experiments/webqsp_ft_wiki_all_ents_${epoch}/all_mention_biencoder_all_avg_128_true_true_bert_large_qa_linear
+experiments/webqsp_ft_wiki_all_ents_${base_epoch}/all_mention_biencoder_all_avg_128_true_true_bert_large_qa_linear
 ```
 
 

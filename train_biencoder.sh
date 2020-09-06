@@ -33,7 +33,7 @@ export PYTHONPATH=.
 
 data_type=${data##*/}
 base_data_type=${base_data##*/}
-if [[ $objective = "finetune" ]]
+if [ $objective = "finetune" ]
 then
     data_type="${data_type}_ft_${base_data_type}_${base_epoch}"
 fi
@@ -48,21 +48,21 @@ then
 fi
 
 # passed in a full file path at this point
-if [[ -d "${data}/tokenized" ]]
+if [ -d "${data}/tokenized" ]
 then
   data_path="${data}/tokenized"
-elif [[ -d "${data}" ]]
+elif [ -d "${data}" ]
 then
   data_path="${data}"
 # starts with webqsp or graphqs
-elif [[ "${data}" = "webqsp" ]]
+elif [ "${data}" = "webqsp" ]
 then
   data_path="EL4QA_data/WebQSP_EL/tokenized"
-elif [[ "${data}" = "graphqs" ]]
+elif [ "${data}" = "graphqs" ]
 then
   data_path="EL4QA_data/graphquestions_EL/tokenized"
 # in inference subdirectory
-elif [[ -d "all_inference_data/${data}" ]]
+elif [ -d "all_inference_data/${data}" ]
 then
   data_path="all_inference_data/${data}/tokenized"
 else
