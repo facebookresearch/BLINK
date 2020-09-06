@@ -68,9 +68,6 @@ experiments/wiki_all_ents/all_avg_128_false_false_bert_base_qa_linear
 ```
 
 ### Finetune on WebQSP
-1. Copy pretraining checkpoint directory `experiments/wiki_all_ents/all_avg_128_true_true_bert_large_qa_linear/epoch_${epoch}` to `experiments/webqsp_ft_epoch_${epoch}/all_avg_128_true_true_bert_large_qa_linear/epoch_0`
-2. Delete the saved trainer state (to reset trainer from scratch): `rm experiments/webqsp_ft_epoch_${epoch}/all_avg_128_true_true_bert_large_qa_linear/epoch_0/training_state.th`
-3. Run:
 ```console
 sbatch train_biencoder.sh webqsp all_avg finetune 32 128 true true large qa_linear 0 -1 0 64 /checkpoint/belindali/entity_link/data/wiki_all_ents 98
 ```
