@@ -87,7 +87,6 @@ def evaluate(
         with torch.no_grad():
             # evaluate with joint mention detection
             if params["freeze_cand_enc"]:
-                # get mention encoding
                 context_outs = reranker.encode_context(
                     context_input,
                     num_cand_mentions=50,
@@ -244,7 +243,11 @@ def main(params):
         valid_samples = utils.read_dataset("valid", params["data_path"])
     except FileNotFoundError:
         valid_samples = utils.read_dataset("dev", params["data_path"])
-    valid_subset = 1024
+    # MUST BE DIVISBLE BY n_gpus OTHERWISE ERROR AT LAST EPOCH
+    if len(valid_samples) > 1024:
+        valid_subset = 1024
+    else:
+        valid_subset = len(valid_samples) - len(valid_samples) % torch.cuda.device_count()
     logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
 
     # save memory
