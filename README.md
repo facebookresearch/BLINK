@@ -46,23 +46,11 @@ python blink/main_dense.py -i --biencoder_model models/elq_wiki_large.bin
 ## Training
 ### Train on WebQSP
 ```console
-sbatch train_biencoder.sh webqsp_all_ents all_avg train 128 20 true true large qa_linear
+sbatch train_biencoder.sh webqsp all_avg train 128 20 true true large qa_linear
 ```
 Saves under
 ```
 experiments/webqsp/all_avg_20_true_true_bert_large_qa_linear
-```
-
-### Finetune on WebQSP
-1. Copy pretraining checkpoint directory `experiments/wiki_all_ents/all_avg_128_true_true_bert_large_qa_linear/epoch_{$epoch}` to `experiments/webqsp_ft_epoch_{$epoch}/all_avg_128_true_true_bert_large_qa_linear/epoch_0`
-2. Delete the saved trainer state (to reset trainer from scratch): `rm experiments/webqsp_ft_epoch_{$epoch}/all_avg_128_true_true_bert_large_qa_linear/epoch_0/training_state.th`
-3. Run:
-```console
-sbatch train_biencoder.sh webqsp_ft_epoch_{$epoch} all_avg train 32 128 true true large qa_linear 0 -1 0
-```
-Saves under
-```
-experiments/webqsp_ft_epoch_{$epoch}/all_mention_biencoder_all_avg_128_true_true_bert_large_qa_linear
 ```
 
 ### Train on Wikipedia
@@ -77,6 +65,18 @@ Saves under
 experiments/wiki_all_ents/all_avg_128_true_true_bert_large_qa_linear
 experiments/wiki_all_ents/all_avg_128_false_false_bert_large_qa_linear
 experiments/wiki_all_ents/all_avg_128_false_false_bert_base_qa_linear
+```
+
+### Finetune on WebQSP
+1. Copy pretraining checkpoint directory `experiments/wiki_all_ents/all_avg_128_true_true_bert_large_qa_linear/epoch_${epoch}` to `experiments/webqsp_ft_epoch_${epoch}/all_avg_128_true_true_bert_large_qa_linear/epoch_0`
+2. Delete the saved trainer state (to reset trainer from scratch): `rm experiments/webqsp_ft_epoch_${epoch}/all_avg_128_true_true_bert_large_qa_linear/epoch_0/training_state.th`
+3. Run:
+```console
+sbatch train_biencoder.sh webqsp all_avg finetune 32 128 true true large qa_linear 0 -1 0 64 /checkpoint/belindali/entity_link/data/wiki_all_ents 98
+```
+Saves under
+```
+experiments/webqsp_ft_wiki_all_ents_${epoch}/all_mention_biencoder_all_avg_128_true_true_bert_large_qa_linear
 ```
 
 
