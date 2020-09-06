@@ -92,6 +92,8 @@ then
 elif [[ "${test_questions}" = "triviaqa" ]]
 then
     max_context_length_args="--max_context_length 256"
+else
+    max_context_length_args="--max_context_length 32"
 fi
 
 if [[ "${use_custom_entity_encoding}" != "true" ]]

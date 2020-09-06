@@ -507,8 +507,10 @@ class BiEncoderModule(torch.nn.Module):
         if token_idx_ctxt is not None:
             context_outs = self.forward_ctxt(
                 token_idx_ctxt, segment_idx_ctxt, mask_ctxt,
-                gold_mention_bounds, gold_mention_bounds_mask, num_cand_mentions, topK_threshold,
-                get_mention_scores,
+                gold_mention_bounds=gold_mention_bounds,
+                gold_mention_bounds_mask=gold_mention_bounds_mask,
+                num_cand_mentions=num_cand_mentions, topK_threshold=topK_threshold,
+                get_mention_scores=get_mention_scores,
             )
         if token_idx_cands is not None:
             cand_outs = self.forward_candidate(
