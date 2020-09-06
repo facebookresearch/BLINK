@@ -336,7 +336,7 @@ def main(params):
         # min(len(train_tensor_data_tuple[0]), num_samples_per_batch), 
         logger
     )
-    if trainer_path is not None:
+    if trainer_path is not None and os.path.exists(trainer_path):
         training_state = torch.load(trainer_path)
         optimizer.load_state_dict(training_state["optimizer"])
         scheduler.load_state_dict(training_state["scheduler"])
