@@ -126,7 +126,7 @@ Pretrain Wiki, Finetune WebQSP (e97;e22) | WebQSP test | 0.9109 | 0.8815 | 0.896
 WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
 Wiki train (e97) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | X |
 Pretrain Wiki, Finetune WebQSP (e97;e22) | GraphQuestions test | 0.7394 | 0.6700 | 0.7030 | X |
-Wiki train (e23) | AIDA-YAGO2 test(?) | 0.6959 | 0.7228 | 0.7091 | ? |
+Wiki train (e97) | AIDA-YAGO2 test(?) | 0.6959 | 0.7228 | 0.7091 | ? |
 
 Timing info for FAISS search vs. biencoder forward run:
 (Pretrain Wiki, Fineetune WebQSP on WebQSP test)
