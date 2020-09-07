@@ -108,7 +108,7 @@ bash run_eval_slurm.sh graphquestions_EL $split 'webqsp_ft_wiki_all_ents_97;all_
 
 Run something on CPUs:
 ```console
-srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_slurm.sh nq ${split} 'finetuned_webqsp;all_mention_biencoder_all_avg_20_true_true_bert_large_qa_linear' -4.5 50 joint 16 false false
+srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_slurm.sh nq ${split} 'webqsp_ft_wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;22' -4.5 50 joint 16 false false
 ```
 
 For Wiki-trained, best threshold is `-2.9` for WebQSP and graphquestions, `-3.5` for AIDA-YAGO.
@@ -133,8 +133,11 @@ Timing info for FAISS search vs. biencoder forward run:
 * bsz 64 (80 CPUs): forward pass = 10.31s, FAISS search = 0.3123s
 * bsz 1 (80 CPUs): forward pass = 0.1636s, FAISS search = 0.0381s 
 
-
-TODO: make training adversarial selection stricter?
+### Tuning hyperparameters and getting predictions
+Code is in `scripts/tune_hyperparams_new.py`
+First run evaluation with threshold `-inf`.
+In the script, modify the source save dir and `get_topk_cands` (if just purely getting top k w/out threshold), and set `topk` if that is `True`.
+Otherwise, if just experimenting with thresholds, set `threshold` to desired test value.
 
 
 ## The BLINK knowledge base
