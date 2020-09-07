@@ -95,13 +95,15 @@ Zero-shot from Wikipedia
 CUDA_VISIBLE_DEVICES=0 bash run_eval_slurm.sh WebQSP_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;97' -2.9 50 joint
 
 CUDA_VISIBLE_DEVICES=1 bash run_eval_slurm.sh graphquestions_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;97' -2.9 50 joint
+
+CUDA_VISIBLE_DEVICES= bash run_eval_slurm.sh AIDA-YAGO2 test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;97' -3.5 50 joint 64 false false
 ```
 
 Pretrain on Wikipedia, finetuned on WebQSP
 ```console
-bash run_eval_slurm.sh WebQSP_EL $split 'finetuned_webqsp;all_avg_128_true_true_bert_large_qa_linear;18' -1.5 50 joint
+bash run_eval_slurm.sh WebQSP_EL $split 'webqsp_ft_wiki_all_ents_97;all_avg_128_true_true_bert_large_qa_linear;22' -1.5 50 joint
 
-bash run_eval_slurm.sh graphquestions_EL $split 'finetuned_webqsp;all_avg_128_true_true_bert_large_qa_linear;18' -1.5 50 joint
+bash run_eval_slurm.sh graphquestions_EL $split 'webqsp_ft_wiki_all_ents_97;all_avg_128_true_true_bert_large_qa_linear;22' -1.5 50 joint
 ```
 
 Run something on CPUs:
@@ -109,8 +111,8 @@ Run something on CPUs:
 srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_slurm.sh nq ${split} 'finetuned_webqsp;all_mention_biencoder_all_avg_20_true_true_bert_large_qa_linear' -4.5 50 joint 16 false false
 ```
 
-For Wiki-trained, best threshold is `TODO` (-2.9) for WebQSP, `TODO` (-2.9) for graphquestions, -3.5 for AIDA-YAGO.
-For finetuned on WebQSP, best threshold is -1.5 for WebQSP, -0.9 for graphquestions,
+For Wiki-trained, best threshold is `-2.9` for WebQSP and graphquestions, `-3.5` for AIDA-YAGO.
+For finetuned on WebQSP, best threshold is `-1.5` for WebQSP, `-0.9` for graphquestions,
 
 Lower thresholds = Predict more candidates = Higher recall/lower precision
 
@@ -119,14 +121,12 @@ The following table summarizes the performance of BLINK for the considered datas
 model | dataset | biencoder precision | biencoder recall | biencoder F1 | runtime (s), bsz=64, bsz=1 (1CPU), bsz=1 (80CPU) |
 ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
 WebQSP train | WebQSP test | 0.8999 | 0.8498 | 0.8741 | 183.4 |
-Wiki train (e97; HNSW) | WebQSP test | 0.8607 | 0.8181 | 0.8389 | 33.53 |
-Pretrain Wiki, Finetune WebQSP | WebQSP test | 0.9170 | 0.8788 | 0.8975 | ? |
-Pretrain Wiki, Finetune WebQSP (HNSW index) | WebQSP test | 0.9098 | 0.8704 | 0.8897 | 26.43, 2429.3, 345.2 |
+Wiki train (e97) | WebQSP test | 0.8607 | 0.8181 | 0.8389 | X |
+Pretrain Wiki, Finetune WebQSP (e97;e22) | WebQSP test | 0.9109 | 0.8815 | 0.8960 | X |
 WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
-Wiki train (e47; HNSW) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | 43.32 |
-Pretrain Wiki, Finetune WebQSP | GraphQuestions test | 0.7533 | 0.6686 | 0.7084 | ? |
-Pretrain Wiki, Finetune WebQSP (HNSW index) | GraphQuestions test | 0.7467 | 0.6641 | 0.7030 | 51.50 |
-Wiki train (e23) | AIDA-YAGO2 test(?) | 0.7069 | 0.6952 | 0.7010 | ? |
+Wiki train (e97) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | X |
+Pretrain Wiki, Finetune WebQSP (e97;e22) | GraphQuestions test | 0.7394 | 0.6700 | 0.7030 | X |
+Wiki train (e23) | AIDA-YAGO2 test(?) | 0.6959 | 0.7228 | 0.7091 | ? |
 
 Timing info for FAISS search vs. biencoder forward run:
 (Pretrain Wiki, Fineetune WebQSP on WebQSP test)
