@@ -20,10 +20,10 @@ from pytorch_transformers.modeling_bert import (
 
 from pytorch_transformers.tokenization_bert import BertTokenizer
 
-from blink.common.ranker_base import BertEncoder, get_model_obj
+from elq.common.ranker_base import BertEncoder, get_model_obj
 from blink.common.optimizer import get_bert_optimizer
-from blink.biencoder.allennlp_span_utils import batched_span_select, batched_index_select
-from blink.biencoder.utils import batch_reshape_mask_left
+from elq.biencoder.allennlp_span_utils import batched_span_select, batched_index_select
+from elq.biencoder.utils import batch_reshape_mask_left
 
 
 def load_biencoder(params):

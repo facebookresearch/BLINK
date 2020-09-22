@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from pytorch_transformers.tokenization_bert import BertTokenizer
 
 from blink.biencoder.zeshel_utils import world_to_id
-from blink.common.params import ENT_START_TAG, ENT_END_TAG, ENT_TITLE_TAG
+from elq.common.params import ENT_START_TAG, ENT_END_TAG, ENT_TITLE_TAG
 
 
 def select_field_with_padding(data, key1, key2=None, pad_idx=-1):
@@ -498,10 +498,10 @@ def process_mention_data(
     title_token=ENT_TITLE_TAG,
     debug=False,
     logger=None,
-    add_mention_bounds=True,  # TODO change
+    add_mention_bounds=True,
     saved_context_dir=None,
     candidate_token_ids=None,
-    get_entity_descriptions=True,
+    params=None,
 ):
     '''
     Returns /inclusive/ bounds
@@ -513,9 +513,7 @@ def process_mention_data(
         return data, tensor_data_tuple, extra_ret_values
 
     if candidate_token_ids is None and not debug:
-        candidate_token_ids = torch.load("/private/home/belindali/BLINK/models/entity_token_ids_128.t7") # TODO DONT HARDCODE THESE PATHS
-        # id2line = open("/private/home/belindali/BLINK/models/entity.jsonl").readlines() # TODO DONT HARDCODE THESE PATHS
-        # entity2id = {json.loads(id2line[i])['entity']: i for i in range(len(id2line))}
+        candidate_token_ids = torch.load(params["cand_token_ids_path"])
         logger.info("Loaded saved entities info")
         extra_ret_values["candidate_token_ids"] = candidate_token_ids
 
@@ -535,23 +533,6 @@ def process_mention_data(
     cls_token_id = tokenizer.convert_tokens_to_ids("[CLS]")
     sep_token_id = tokenizer.convert_tokens_to_ids("[SEP]")
     for idx, sample in enumerate(iter_):
-        # all_context_lefts = sample[context_key + "_left"]
-
-        # if isinstance(all_context_lefts, str):
-        #     sample[context_key + "_left"] = [sample[context_key + "_left"]]
-        #     sample[context_key + "_right"] = [sample[context_key + "_right"]]
-        #     sample[mention_key] = [sample[mention_key]]
-        #     context_tokens = get_context_representation_single_mention(
-        #         sample,
-        #         tokenizer,
-        #         max_context_length,
-        #         mention_key,
-        #         context_key,
-        #         ent_start_token,
-        #         ent_end_token,
-        #         add_mention_bounds=add_mention_bounds,
-        #     )
-        # elif isinstance(all_context_lefts, list):
         assert not add_mention_bounds, "Adding mention bounds, but we have multiple entities per example"
         if context_key + "_left" in sample:
             context_tokens = get_context_representation_multiple_mentions_left_right(
@@ -586,7 +567,7 @@ def process_mention_data(
                 "tokens": "",
                 "ids": token_ids,
             }
-        elif get_entity_descriptions:
+        elif not params["freeze_cand_enc"]:
             label_tokens = [get_candidate_representation(
                 l, tokenizer, max_cand_length, title[i],
             ) for i, l in enumerate(label)]
@@ -609,7 +590,7 @@ def process_mention_data(
         record = {
             "context": context_tokens,
         }
-        if get_entity_descriptions:
+        if not params["freeze_cand_enc"]:
             record["label"] = label_tokens
         record["label_idx"] = label_idx
 
@@ -633,7 +614,7 @@ def process_mention_data(
             logger.info(
                 "Context ids : " + " ".join([str(v) for v in sample["context"]["ids"]])
             )
-            if get_entity_descriptions:
+            if not params["freeze_cand_encs"]:
                 logger.info("Label tokens : " + " ".join(sample["label"]["tokens"]))
                 logger.info(
                     "Label ids : " + " ".join([str(v) for v in sample["label"]["ids"]])
@@ -655,7 +636,7 @@ def process_mention_data(
         if logger:
             logger.info("Created mention positions vector")
 
-        if get_entity_descriptions:
+        if not params["freeze_cand_enc"]:
             cand_vecs = torch.tensor(
                 select_field(processed_samples, "label", "ids"), dtype=torch.long,
             )
@@ -675,7 +656,7 @@ def process_mention_data(
         # (bs, max_num_spans)
         mention_idx_mask = torch.tensor(mention_idx_mask, dtype=torch.bool)
 
-        if get_entity_descriptions:
+        if not params["freeze_cand_enc"]:
             cand_vecs, cand_mask = select_field_with_padding(
                 processed_samples, "label", "ids", pad_idx=[[0 for _ in range(max_cand_length)]],
             )

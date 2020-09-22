@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-# Provide an argument parser and default command line options for using BLINK.
+# Provide an argument parser and default command line options for using ELQ.
 import argparse
 import importlib
 import os
@@ -18,48 +18,48 @@ ENT_END_TAG = "[unused1]"
 ENT_TITLE_TAG = "[unused2]"
 
 
-class BlinkParser(argparse.ArgumentParser):
+class ElqParser(argparse.ArgumentParser):
     """
     Provide an opt-producer and CLI arguement parser.
 
     More options can be added specific by paassing this object and calling
     ''add_arg()'' or add_argument'' on it.
 
-    :param add_blink_args:
-        (default True) initializes the default arguments for BLINK package.
+    :param add_elq_args:
+        (default True) initializes the default arguments for ELQ package.
     :param add_model_args:
         (default False) initializes the default arguments for loading models,
         including initializing arguments from the model.
     """
 
     def __init__(
-        self, add_blink_args=True, add_model_args=False, 
-        description='BLINK parser',
+        self, add_elq_args=True, add_model_args=False, 
+        description='ELQ parser',
     ):
         super().__init__(
             description=description,
             allow_abbrev=False,
             conflict_handler='resolve',
             formatter_class=argparse.HelpFormatter,
-            add_help=add_blink_args,
+            add_help=add_elq_args,
         )
-        self.blink_home = os.path.dirname(
+        self.elq_home = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         )
-        os.environ['BLINK_HOME'] = self.blink_home
+        os.environ['ELQ_HOME'] = self.elq_home
 
         self.add_arg = self.add_argument
 
         self.overridable = {}
 
-        if add_blink_args:
-            self.add_blink_args()
+        if add_elq_args:
+            self.add_elq_args()
         if add_model_args:
             self.add_model_args()
 
-    def add_blink_args(self, args=None):
+    def add_elq_args(self, args=None):
         """
-        Add common BLINK args across all scripts.
+        Add common ELQ args across all scripts.
         """
         parser = self.add_argument_group("Common Arguments")
         parser.add_argument(
@@ -313,7 +313,14 @@ class BlinkParser(argparse.ArgumentParser):
             default="models/all_entities_large.t7",
             type=str,
             required=False,
-            help="Filepath to the last checkpoint's training state to load.",
+            help="Filepath to the saved entity encodings.",
+        )
+        parser.add_argument(
+            "--cand_token_ids_path",
+            default="models/entity_token_ids_128.t7",
+            type=str,
+            required=False,
+            help="Filepath to the saved tokenized entity descriptions.",
         )
         parser.add_argument(
             "--index_path",

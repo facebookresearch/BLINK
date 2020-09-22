@@ -271,6 +271,7 @@ def main(params):
         context_key=params['context_key'],
         silent=params["silent"],
         logger=logger,
+        add_mention_bounds=(not args.no_mention_bounds),
         debug=params["debug"],
     )
     test_sampler = SequentialSampler(test_tensor_data)

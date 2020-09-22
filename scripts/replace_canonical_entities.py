@@ -2,7 +2,7 @@ import json
 import os
 import numpy as np
 import torch
-from blink.vcg_utils.measures import entity_linking_tp_with_overlap
+from elq.vcg_utils.measures import entity_linking_tp_with_overlap
 from tqdm import tqdm
 
 from transformers import BertTokenizer

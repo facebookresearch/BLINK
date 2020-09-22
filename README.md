@@ -40,7 +40,7 @@ chmod +x download_models.sh
 ## Interactive Mode
 ```console
 export PYTHONPATH=.
-python blink/main_dense.py -i --biencoder_model models/elq_wiki_large.bin
+python elq/main_dense.py -i --biencoder_model models/elq_wiki_large.bin
 ```
 
 ## Training

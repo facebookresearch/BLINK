@@ -7,7 +7,7 @@
 import argparse
 import json
 import sys
-from blink.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer, DenseIVFFlatIndexer
+from elq.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer, DenseIVFFlatIndexer
 
 from tqdm import tqdm
 import logging
@@ -19,17 +19,17 @@ import torch.nn.functional as F
 
 import blink.ner as NER
 from torch.utils.data import DataLoader, SequentialSampler, TensorDataset
-from blink.biencoder.biencoder import BiEncoderRanker, load_biencoder, to_bert_input
-from blink.biencoder.data_process import (
+from elq.biencoder.biencoder import BiEncoderRanker, load_biencoder, to_bert_input
+from elq.biencoder.data_process import (
     process_mention_data,
     get_context_representation_single_mention,
     get_candidate_representation,
 )
-import blink.candidate_ranking.utils as utils
+import elq.candidate_ranking.utils as utils
 import math
 
-from blink.vcg_utils.measures import entity_linking_tp_with_overlap
-from blink.biencoder.utils import batch_reshape_mask_left
+from elq.vcg_utils.measures import entity_linking_tp_with_overlap
+from elq.biencoder.utils import batch_reshape_mask_left
 
 import os
 import sys
@@ -127,10 +127,10 @@ def _load_candidates(
             lines = fin.readlines()
             for line in lines:
                 entity = json.loads(line)
-                id2title[local_idx] = entity["title"]
-                id2text[local_idx] = entity["text"]
+                id2title[str(local_idx)] = entity["title"]
+                id2text[str(local_idx)] = entity["text"]
                 if "kb_idx" in entity:
-                    id2wikidata[local_idx] = entity["kb_idx"]
+                    id2wikidata[str(local_idx)] = entity["kb_idx"]
                 local_idx += 1
         json.dump(id2title, open("models/id2title.json", "w"))
         json.dump(id2text, open("models/id2text.json", "w"))
@@ -232,6 +232,7 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params, logger):
             logger=logger,
             debug=biencoder_params["debug"],
             add_mention_bounds=(not biencoder_params.get("no_mention_bounds", False)),
+            params=biencoder_params,
         )
     else:
         samples_text_tuple = []
@@ -632,6 +633,7 @@ def load_models(args, logger):
                 biencoder_params = json.loads(line)
                 break
     biencoder_params["path_to_model"] = args.biencoder_model
+    biencoder_params["cand_token_ids_path"] = args.cand_token_ids_path
     biencoder_params["eval_batch_size"] = args.eval_batch_size
     biencoder_params["no_cuda"] = not args.use_cuda
     if biencoder_params["no_cuda"]:
@@ -887,6 +889,13 @@ if __name__ == "__main__":
         help="Path to the biencoder configuration.",
     )
     parser.add_argument(
+        "--cand_token_ids_path",
+        dest="cand_token_ids_path",
+        type=str,
+        default="models/entity_token_ids_128.t7",  # ALL WIKIPEDIA!
+        help="Path to tokenized entity catalogue",
+    )
+    parser.add_argument(
         "--entity_catalogue",
         dest="entity_catalogue",
         type=str,
@@ -901,18 +910,26 @@ if __name__ == "__main__":
         help="Path to the entity catalogue.",
     )
     parser.add_argument(
-        "--faiss_index", type=str, default="hnsw", choices=["hnsw", "flat", "ivfflat", "none"], help="whether to use faiss index",
-    )
-    parser.add_argument(
-        "--index_path", type=str, default="models/faiss_hnsw_index.pkl", help="path to load indexer",
-    )
-
-    parser.add_argument(
         "--eval_batch_size",
         dest="eval_batch_size",
         type=int,
         default=8,
         help="Crossencoder's batch size for evaluation",
+    )
+    parser.add_argument(
+        "--faiss_index",
+        dest="faiss_index",
+        type=str,
+        default="hnsw",
+        choices=["hnsw", "flat", "ivfflat", "none"],
+        help="whether to use faiss index",
+    )
+    parser.add_argument(
+        "--index_path",
+        dest="index_path",
+        type=str,
+        default="models/faiss_hnsw_index.pkl",
+        help="path to load indexer",
     )
     parser.add_argument(
         "--max_context_length",

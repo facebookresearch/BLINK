@@ -31,16 +31,16 @@ from pytorch_transformers.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_transformers.optimization import WarmupLinearSchedule
 from pytorch_transformers.tokenization_bert import BertTokenizer
 
-from blink.biencoder.biencoder import BiEncoderRanker
-from blink.vcg_utils.measures import entity_linking_tp_with_overlap
+from elq.biencoder.biencoder import BiEncoderRanker
+from elq.vcg_utils.measures import entity_linking_tp_with_overlap
 import logging
 
-import blink.candidate_ranking.utils as utils
-from blink.biencoder.data_process import process_mention_data
+import elq.candidate_ranking.utils as utils
+from elq.biencoder.data_process import process_mention_data
 from blink.biencoder.zeshel_utils import DOC_PATH, WORLDS, world_to_id
 from blink.common.optimizer import get_bert_optimizer
-from blink.common.params import BlinkParser
-from blink.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer, DenseIVFFlatIndexer
+from elq.common.params import ElqParser
+from elq.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer, DenseIVFFlatIndexer
 
 
 logger = None
@@ -250,9 +250,8 @@ def main(params):
         valid_subset = len(valid_samples) - len(valid_samples) % torch.cuda.device_count()
     logger.info("Read %d valid samples, choosing %d subset" % (len(valid_samples), valid_subset))
 
-    # save memory
     valid_data, valid_tensor_data, extra_ret_values = process_mention_data(
-        samples=valid_samples[:valid_subset],  # use subset of valid data TODO Make subset random????
+        samples=valid_samples[:valid_subset],  # use subset of valid data
         tokenizer=tokenizer,
         max_context_length=params["max_context_length"],
         max_cand_length=params["max_cand_length"],
@@ -263,8 +262,7 @@ def main(params):
         debug=params["debug"],
         add_mention_bounds=(not args.no_mention_bounds),
         candidate_token_ids=None,
-        get_entity_descriptions=(not params["freeze_cand_enc"]),
-        # saved_context_dir=os.path.join(tokenized_contexts_dir, "valid"),
+        params=params,
     )
     candidate_token_ids = extra_ret_values["candidate_token_ids"]
     valid_tensor_data = TensorDataset(*valid_tensor_data)
@@ -325,7 +323,7 @@ def main(params):
             add_mention_bounds=(not args.no_mention_bounds),
             # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
             candidate_token_ids=candidate_token_ids,
-            get_entity_descriptions=(not params["freeze_cand_enc"]),
+            params=params,
         )
         logger.info("Finished preparing training data")
     else:
@@ -371,7 +369,7 @@ def main(params):
                 add_mention_bounds=(not args.no_mention_bounds),
                 # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
                 candidate_token_ids=candidate_token_ids,
-                get_entity_descriptions=(not params["freeze_cand_enc"]),
+                params=params,
             )
             logger.info("Finished preparing training data for epoch {}: {} samples".format(epoch_idx, len(train_tensor_data_tuple[0])))
     
@@ -593,7 +591,7 @@ def main(params):
 
 
 if __name__ == "__main__":
-    parser = BlinkParser(add_model_args=True)
+    parser = ElqParser(add_model_args=True)
     parser.add_training_args()
 
     # args = argparse.Namespace(**params)

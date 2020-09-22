@@ -1,6 +1,6 @@
-from blink.biencoder.biencoder import BiEncoderRanker, load_biencoder, to_bert_input
+from elq.biencoder.biencoder import BiEncoderRanker, load_biencoder, to_bert_input
 import blink.candidate_ranking.utils as utils
-from blink.main_dense import _get_test_samples, _run_biencoder, _load_candidates, get_mention_bound_candidates, _process_biencoder_dataloader
+from elq.main_dense import _get_test_samples, _run_biencoder, _load_candidates, get_mention_bound_candidates, _process_biencoder_dataloader
 
 import json
 import logging

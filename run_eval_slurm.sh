@@ -18,7 +18,7 @@
 
 test_questions=$1  # WebQSP_EL/AIDA-YAGO2/graphquestions_EL
 subset=$2  # test/dev/train_only
-model_full=$3  # finetuned_webqsp/finetuned_webqsp_all_ents/finetuned_graphqs/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
+model_full=$3  # finetuned_webqsp/wiki_all_ents/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
 threshold=$4  # -4.5/-2.9/-inf for no pruning
 top_k=$5  # 50
 threshold_type=$6  # joint / top_entity_by_mention
@@ -104,7 +104,7 @@ else
 fi
 echo ${mentions_file}
 
-command="python blink/main_dense.py \
+command="python elq/main_dense.py \
     --test_mentions ${mentions_file} \
     --test_entities models/entity.jsonl \
     --entity_catalogue models/entity.jsonl \

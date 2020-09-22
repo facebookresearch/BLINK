@@ -1,12 +1,64 @@
 import torch
-from blink.biencoder.biencoder import load_biencoder
-from blink.biencoder.eval_biencoder import load_or_generate_candidate_pool, encode_candidate
-import blink.candidate_ranking.utils as utils
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
+from elq.biencoder.biencoder import load_biencoder
+import elq.candidate_ranking.utils as utils
 import json
 import sys
 import os
 
 import argparse
+
+
+def encode_candidate(
+    reranker,
+    candidate_pool,
+    encode_batch_size,
+    silent,
+    logger,
+):
+    reranker.model.eval()
+    device = reranker.device
+    #for cand_pool in candidate_pool:
+    #logger.info("Encoding candidate pool %s" % src)
+    sampler = SequentialSampler(candidate_pool)
+    data_loader = DataLoader(
+        candidate_pool, sampler=sampler, batch_size=encode_batch_size
+    )
+    if silent:
+        iter_ = data_loader
+    else:
+        iter_ = tqdm(data_loader)
+
+    cand_encode_list = None
+    for step, batch in enumerate(iter_):
+        cands = batch
+        cands = cands.to(device)
+        cand_encode = reranker.encode_candidate(cands)
+        if cand_encode_list is None:
+            cand_encode_list = cand_encode
+        else:
+            cand_encode_list = torch.cat((cand_encode_list, cand_encode))
+
+    return cand_encode_list
+
+
+def load_candidate_pool(
+    tokenizer,
+    params,
+    logger,
+    cand_pool_path,
+):
+    candidate_pool = None
+    # try to load candidate pool from file
+    try:
+        logger.info("Loading pre-generated candidate pool from: ")
+        logger.info(cand_pool_path)
+        candidate_pool = torch.load(cand_pool_path)
+    except:
+        logger.info("Loading failed.")
+    assert candidate_pool is not None
+
+    return candidate_pool
 
 
 # TO replicate Ledell's encodings...
@@ -117,7 +169,7 @@ if getattr(args, 'compare_saved_embeds', None) is not None:
 #                     break
 #     biencoder_params['entity_dict_path'] = new_entity_dict_path
 
-candidate_pool = load_or_generate_candidate_pool(
+candidate_pool = load_candidate_pool(
     biencoder.tokenizer,
     biencoder_params,
     logger,

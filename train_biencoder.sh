@@ -141,10 +141,10 @@ then
   else
     if [ "${load_saved_cand_encs}" = "true" ]
     then
-      model_path_arg="--path_to_model models/biencoder_wiki_large.bin"
+      model_path_arg="--path_to_model models/elq_wiki_large.bin"
     fi
   fi
-  cmd="python blink/biencoder/train_biencoder.py \
+  cmd="python elq/biencoder/train_biencoder.py \
     --output_path ${model_dir} \
     ${model_path_arg} ${cand_enc_args} \
     --title_key entity \
