@@ -286,11 +286,13 @@ def _run_biencoder(
         mask_ctxt = context_input != biencoder.NULL_IDX
         with torch.no_grad():
             context_outs = biencoder.encode_context(
-                context_input, num_cand_mentions=num_cand_mentions, topK_threshold=threshold
+                context_input, num_cand_mentions=num_cand_mentions, topK_threshold=threshold,
+                #gold_mention_bounds=batch[-2], gold_mention_bounds_mask=batch[-1],
             )
             embedding_ctxt = context_outs['mention_reps']
             left_align_mask = context_outs['mention_masks']
             chosen_mention_logits = context_outs['mention_logits']
+            #chosen_mention_logits = 99999 * context_outs['mention_masks'].float()
             chosen_mention_bounds = context_outs['mention_bounds']
 
             '''
@@ -464,12 +466,8 @@ def get_predictions(
             for idx, mb in enumerate(e_mention_bounds):
                 mb[1] += 1  # prediction was inclusive, now make exclusive
                 # check if in existing mentions
-                try:
-                    if mention_masked_utterance[mb[0]:mb[1]].sum() >= 1:
-                        continue
-                except:
-                    import pdb
-                    pdb.set_trace()
+                if mention_masked_utterance[mb[0]:mb[1]].sum() >= 1:
+                    continue
                 e_mention_bounds_pruned.append(mb)
                 all_pred_entities_pruned.append(all_pred_entities[idx])
                 chosen_distances_pruned.append(float(chosen_distances[idx]))
@@ -511,7 +509,8 @@ def get_predictions(
 
                 # add alignment factor (my_input_start) to predicted mention triples
                 pred_triples = [(
-                    triple[0], triple[1] + my_input_start, triple[2] + my_input_start,
+                    triple[0],
+                    triple[1] + my_input_start, triple[2] + my_input_start,
                 ) for triple in pred_triples]
                 gold_triples = [(
                     str(sample['label_id'][j]),
@@ -525,7 +524,6 @@ def get_predictions(
 
                 # compute number correct given the input window
                 pred_input_window_triples = [(
-                    # sample['all_gold_entities'][i],
                     str(all_pred_entities_pruned[j]),
                     int(e_mention_bounds_pruned[j][0]), int(e_mention_bounds_pruned[j][1]),
                 ) for j in range(len(all_pred_entities_pruned))]
@@ -538,10 +536,6 @@ def get_predictions(
                 num_correct_strong_from_input_window += num_overlap_strong_window
                 num_gold_from_input_window += len(input_mention_idxs)
 
-                for triple in pred_triples:
-                    if triple[0] not in id2title:
-                        import pdb
-                        pdb.set_trace()
                 entity_results.update({
                     "pred_tuples_string": [
                         [id2title[triple[0]], tokenizer.decode(sample['tokenized_text_ids'][triple[1]:triple[2]])]
