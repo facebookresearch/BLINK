@@ -5,6 +5,7 @@ import elq.candidate_ranking.utils as utils
 import json
 import sys
 import os
+from tqdm import tqdm
 
 import argparse
 
@@ -168,7 +169,6 @@ if getattr(args, 'compare_saved_embeds', None) is not None:
 #                 if i > 10:
 #                     break
 #     biencoder_params['entity_dict_path'] = new_entity_dict_path
-
 candidate_pool = load_candidate_pool(
     biencoder.tokenizer,
     biencoder_params,
