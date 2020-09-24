@@ -28,7 +28,7 @@ do
     if [ ! -f "${save_dir}/${start}_${end}.t7" ]
     then
         echo ${data} ${mention_agg_type} ${start}
-        sbatch train_biencoder.sh \
+        sbatch train_elq.sh \
             ${data} ${mention_agg_type} predict 512 \
             ${context_length} ${load_saved_cand_encs} ${adversarial} \
             ${model_size} qa_linear ${start} ${end} ${latest_epoch}

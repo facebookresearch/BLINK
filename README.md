@@ -1,144 +1,189 @@
-# End-to-End Entity Linking
+![BLINK logo](./img/blink_logo_banner.png)
+--------------------------------------------------------------------------------
+
+BLINK is an Entity Linking python library that uses Wikipedia as the target knowledge base.
+
+The process of linking entities to Wikipedia is also known as [Wikification](https://en.wikipedia.org/wiki/Wikification).
 
 
-## Data
-Data can be found in:
-- Entity linking data is under http://dl.fbaipublicfiles.com/elq/EL4QA_data.tar.gz.
-- All preprocessed inference data (AIDA-YAGO2/nq/triviaqa/WebQuestions) is under http://dl.fbaipublicfiles.com/elq/all_inference_data.tar.gz
-- All preprocessed wikipedia pretraining data is under http://dl.fbaipublicfiles.com/elq/wiki_all_ents.tar.gz
-    - WARNING: LARGE!!!
-- [FB Internal] Data under `/checkpoint/belindali/entity_link/data/*/tokenized`.
+### news
+- (3 July 2020) addedd [FAISS](https://github.com/facebookresearch/faiss) support in BLINK - efficient exact/approximate retrieval
 
-The FAISS indices are under:
-- http://dl.fbaipublicfiles.com/elq/faiss_flat_index.pkl
-- http://dl.fbaipublicfiles.com/elq/faiss_hnsw_index.pkl
-    - Note this differs from HNSW used in BLINK, as it returns inner product score
-You can also create your own FAISS indices by running
 
-```console
+## BLINK architecture:
 
+The BLINK architecture is described in the following paper:
+
+```bibtex
+@inproceedings{wu2019zero,
+ title={Zero-shot Entity Linking with Dense Entity Retrieval},
+ author={Ledell Wu, Fabio Petroni, Martin Josifoski, Sebastian Riedel, Luke Zettlemoyer},
+ booktitle={arXiv:1911.03814},
+ year={2019}
+}
 ```
 
-## Model Architecture
-**TODO cite paper**
-QA-only model is under http://dl.fbaipublicfiles.com/elq/elq_webqsp_only_large.bin
-Entity token ids are under http://dl.fbaipublicfiles.com/elq/entity_token_ids_128.t7
+[https://arxiv.org/pdf/1911.03814.pdf](https://arxiv.org/pdf/1911.03814.pdf)
 
-## Setup
-1. Create conda environment and install requirements
-```console
-conda create -n el4qa -y python=3.7 && conda activate el4qa
+In a nutshell, BLINK uses a two stages approach for entity linking, based on fine-tuned BERT architectures. In the first stage, BLINK performs retrieval in a dense space defined by a bi-encoder that independently embeds the mention context and the entity descriptions. Each candidate is then examined more carefully with a cross-encoder, that concatenates the mention and entity text. BLINK achieves state-of-the-art results on multiple datasets.
+
+
+## Use BLINK
+
+### 1. Create conda environment and install requirements
+
+(optional) It might be a good idea to use a separate conda environment. It can be created by running:
+```
+conda create -n blink37 -y python=3.7 && conda activate blink37
 pip install -r requirements.txt
 ```
 
-2. Download the models and entity embeddings
+### 2. Download the BLINK models
+
+The BLINK pretrained models can be downloaded using the following script:
 ```console
 chmod +x download_models.sh
 ./download_models.sh
 ```
 
-## Interactive Mode
+We additionally provide a [FAISS](https://github.com/facebookresearch/faiss) indexer in BLINK, which enables efficient exact/approximate retrieval for biencoder model.
+
+- [flat index](http://dl.fbaipublicfiles.com/BLINK//faiss_flat_index.pkl)
+- [hnsw (approximate search) index](http://dl.fbaipublicfiles.com/BLINK/faiss_hnsw_index.pkl)
+
+
+To build and save FAISS (exact search) index yourself, run
+`python blink/build_faiss_index.py --output_path models/faiss_flat_index.pkl`
+
+
+### 3. Use BLINK interactively
+A quick way to explore the BLINK linking capabilities is through the `main_dense` interactive script. BLINK uses [Flair](https://github.com/flairNLP/flair) for Named Entity Recognition (NER) to obtain entity mentions from input text, then run entity linking. 
+
 ```console
-export PYTHONPATH=.
-python elq/main_dense.py -i --biencoder_model models/elq_wiki_large.bin
+python blink/main_dense.py -i
 ```
 
-## Training
-### Train on WebQSP
+Fast mode: in the fast mode the model only uses the bi-encoder, which is much faster (accuracy drops slightly, see details in "Benchmarking BLINK" section). 
+
 ```console
-sbatch train_biencoder.sh webqsp all_avg train 128 20 true true large qa_linear
-```
-Saves under
-```
-experiments/webqsp/all_avg_20_true_true_bert_large_qa_linear
+python blink/main_dense.py -i --fast
 ```
 
-### Train on Wikipedia
+To run BLINK with saved FAISS index, run:
 ```console
-sbatch train_biencoder.sh /checkpoint/belindali/entity_link/data/wiki_all_ents all_avg train 32 128 true true large qa_linear 0 -1 22 64
-sbatch train_biencoder.sh wiki_all_ents all_avg train 32 128 false false large qa_linear 0 -1 3 64
-sbatch train_biencoder.sh wiki_all_ents all_avg train 32 128 false false base qa_linear 0 -1 10 64
+python blink/main_dense.py --faiss_index flat --index_path models/faiss_flat_index.pkl
 ```
-
-Saves under
-```
-experiments/wiki_all_ents/all_avg_128_true_true_bert_large_qa_linear
-experiments/wiki_all_ents/all_avg_128_false_false_bert_large_qa_linear
-experiments/wiki_all_ents/all_avg_128_false_false_bert_base_qa_linear
-```
-
-### Finetune on WebQSP
+or 
 ```console
-sbatch train_biencoder.sh webqsp all_avg finetune 32 128 true true large qa_linear 0 -1 0 64 /checkpoint/belindali/entity_link/data/wiki_all_ents ${base_epoch}
-```
-Saves under
-```
-experiments/webqsp_ft_wiki_all_ents_${base_epoch}/all_mention_biencoder_all_avg_128_true_true_bert_large_qa_linear
+python blink/main_dense.py --faiss_index hnsw --index_path models/faiss_hnsw_index.pkl
 ```
 
 
-## Generating Entity Embeddings
+Example: 
 ```console
-bash get_entity_encodings.sh wiki_all_ents all_avg 128 false false large <epoch_to_pick_up_from>
+Bert and Ernie are two Muppets who appear together in numerous skits on the popular children's television show of the United States, Sesame Street.
 ```
-Saves under `experiments/wiki_all_ents/all_avg_128_false_false_bert_large_qa_linear/entity_encodings`
-
-``` console
-bash get_entity_encodings.sh wiki_all_ents all_avg 128 false false base <epoch_to_pick_up_from>
-```
-Saves under `experiments/wiki_all_ents/all_avg_128_false_false_bert_base_qa_linear/entity_encodings`
+Output:
+<img align="middle" src="img/example_result_light.png" height="480">
 
 
-## Evaluation
-Zero-shot from Wikipedia
+Note: passing ```--show_url``` argument will show the Wikipedia url of each entity. The id number displayed corresponds to the order of entities in the ```entity.jsonl``` file downloaded from ```./download_models.sh``` (starts from 0). The ```entity.jsonl``` file contains information of one entity per row (includes Wikipedia url, title, text, etc.).
+
+### 4. Use BLINK in your codebase
+
 ```console
-CUDA_VISIBLE_DEVICES=0 bash run_eval_slurm.sh WebQSP_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;97' -2.9 50 joint
-
-CUDA_VISIBLE_DEVICES=1 bash run_eval_slurm.sh graphquestions_EL test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;97' -2.9 50 joint
-
-CUDA_VISIBLE_DEVICES= bash run_eval_slurm.sh AIDA-YAGO2 test 'wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;97' -3.5 50 joint 64 false false
+pip install -e git+git@github.com:facebookresearch/BLINK#egg=BLINK
 ```
 
-Pretrain on Wikipedia, finetuned on WebQSP
+```python
+import blink.main_dense as main_dense
+import argparse
+
+models_path = "models/" # the path where you stored the BLINK models
+
+config = {
+    "test_entities": None,
+    "test_mentions": None,
+    "interactive": False,
+    "biencoder_model": models_path+"biencoder_wiki_large.bin",
+    "biencoder_config": models_path+"biencoder_wiki_large.json",
+    "entity_catalogue": models_path+"entity.jsonl",
+    "entity_encoding": models_path+"all_entities_large.t7",
+    "crossencoder_model": models_path+"crossencoder_wiki_large.bin",
+    "crossencoder_config": models_path+"crossencoder_wiki_large.json",
+    "fast": False, # set this to be true if speed is a concern
+    "output_path": "logs/" # logging directory
+}
+
+args = argparse.Namespace(**config)
+
+models = main_dense.load_models(args, logger=None)
+
+data_to_link = [ {
+                    "id": 0,
+                    "label": "unknown",
+                    "label_id": -1,
+                    "context_left": "".lower(),
+                    "mention": "Shakespeare".lower(),
+                    "context_right": "'s account of the Roman general Julius Caesar's murder by his friend Brutus is a meditation on duty.".lower(),
+                },
+                {
+                    "id": 1,
+                    "label": "unknown",
+                    "label_id": -1,
+                    "context_left": "Shakespeare's account of the Roman general".lower(),
+                    "mention": "Julius Caesar".lower(),
+                    "context_right": "'s murder by his friend Brutus is a meditation on duty.".lower(),
+                }
+                ]
+
+_, _, _, _, _, predictions, scores, = main_dense.run(args, logger=None, *models, test_data=data_to_link)
+
+```
+
+## Benchmarking BLINK
+
+We provide scripts to benchmark BLINK against popular Entity Linking datasets.
+Note that our scripts evaluate BLINK in a full Wikipedia setting, that is, the BLINK entity library contains all Wikipedia pages.
+
+To benchmark BLINK run the following commands:
+
 ```console
-bash run_eval_slurm.sh WebQSP_EL $split 'webqsp_ft_wiki_all_ents_97;all_avg_128_true_true_bert_large_qa_linear;22' -1.5 50 joint
-
-bash run_eval_slurm.sh graphquestions_EL $split 'webqsp_ft_wiki_all_ents_97;all_avg_128_true_true_bert_large_qa_linear;22' -1.5 50 joint
+./scripts/get_train_and_benchmark_data.sh
+python scripts/create_BLINK_benchmark_data.py
+python blink/run_benchmark.py
 ```
 
-Run something on CPUs:
-```console
-srun --gpus-per-node=0 --partition=learnfair --time=3000 --cpus-per-task 80 --mem=400000 --pty -l bash run_eval_slurm.sh nq ${split} 'webqsp_ft_wiki_all_ents;all_avg_128_true_true_bert_large_qa_linear;22' -4.5 50 joint 16 false false
-```
+The following table summarizes the performance of BLINK for the considered datasets.
 
-For Wiki-trained, best threshold is `-2.9` for WebQSP and graphquestions, `-3.5` for AIDA-YAGO.
-For finetuned on WebQSP, best threshold is `-1.5` for WebQSP, `-0.9` for graphquestions,
+| dataset | biencoder accuracy (fast mode) | biencoder recall@10 | biencoder recall@30 | biencoder recall@100 | crossencoder normalized accuracy | overall unnormalized accuracy | support |
+| ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |  ------------- |  ------------- |
+| AIDA-YAGO2 testa | 0.8145 | 0.9425 | 0.9639 | 0.9826 | 0.8700 | 0.8212 | 4766 |
+| AIDA-YAGO2 testb | 0.7951 | 0.9238 | 0.9487 | 0.9663 | 0.8669 | 0.8027 | 4446 |
+| ACE 2004 | 0.8443 | 0.9795| 0.9836 | 0.9836 | 0.8870 | 0.8689 | 244 |
+| aquaint | 0.8662 | 0.9618| 0.9765| 0.9897 | 0.8889 | 0.8588 | 680 |
+| clueweb - WNED-CWEB (CWEB) | 0.6747 | 0.8223 | 0.8609 | 0.8868 | 0.826 | 0.6825 | 10491 |
+| msnbc | 0.8428 | 0.9303 | 0.9546 | 0.9676| 0.9031 | 0.8509 | 617 |
+| wikipedia - WNED-WIKI (WIKI) | 0.7976 | 0.9347 | 0.9546 | 0.9776| 0.8609 | 0.8067 | 6383 |
+| TAC-KBP 2010<sup>1</sup> | 0.8898 | 0.9549 | 0.9706 | 0.9843 | 0.9517 | 0.9087 | 1019 |
 
-Lower thresholds = Predict more candidates = Higher recall/lower precision
-
-The following table summarizes the performance of BLINK for the considered datasets. (Weak matching for WebQSP/GraphQuestions, strong matching for AIDA-YAGO)
-
-model | dataset | biencoder precision | biencoder recall | biencoder F1 | runtime (s), bsz=64, bsz=1 (1CPU), bsz=1 (80CPU) |
-------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
-WebQSP train | WebQSP test | 0.8999 | 0.8498 | 0.8741 | 183.4 |
-Wiki train (e97) | WebQSP test | 0.8607 | 0.8181 | 0.8389 | X |
-Pretrain Wiki, Finetune WebQSP (e97;e22) | WebQSP test | 0.9109 | 0.8815 | 0.8960 | X |
-WebQSP train | GraphQuestions test | 0.6010 | 0.5720 | 0.5862 | 756.3 |
-Wiki train (e97) | GraphQuestions test | 0.6975 | 0.6975 | 0.6975 | X |
-Pretrain Wiki, Finetune WebQSP (e97;e22) | GraphQuestions test | 0.7394 | 0.6700 | 0.7030 | X |
-Wiki train (e97) | AIDA-YAGO2 test(?) | 0.6959 | 0.7228 | 0.7091 | ? |
-
-Timing info for FAISS search vs. biencoder forward run:
-(Pretrain Wiki, Fineetune WebQSP on WebQSP test)
-* bsz 64 (80 CPUs): forward pass = 10.31s, FAISS search = 0.3123s
-* bsz 1 (80 CPUs): forward pass = 0.1636s, FAISS search = 0.0381s 
-
-### Tuning hyperparameters and getting predictions
-Code is in `scripts/tune_hyperparams_new.py`
-First run evaluation with threshold `-inf`.
-In the script, modify the source save dir and `get_topk_cands` (if just purely getting top k w/out threshold), and set `topk` if that is `True`.
-Otherwise, if just experimenting with thresholds, set `threshold` to desired test value.
+<sup>1</sup> Licensed dataset available [here](https://catalog.ldc.upenn.edu/LDC2018T16).
 
 
 ## The BLINK knowledge base
 The BLINK knowledge base (entity library) is based on the 2019/08/01 Wikipedia dump, downloadable in its raw format from [http://dl.fbaipublicfiles.com/BLINK/enwiki-pages-articles.xml.bz2](http://dl.fbaipublicfiles.com/BLINK/enwiki-pages-articles.xml.bz2)
+
+## BLINK with solr as IR system
+The first version of BLINK uses an [Apache Solr](https://lucene.apache.org/solr) based Information Retrieval system in combination with a BERT based cross-encoder.
+This IR-based version is now deprecated since it's outperformed by the current BLINK architecture.
+If you are interested in the old version, please refer to [this README](blink/candidate_retrieval/README.md).
+
+## The BLINK Team
+BLINK is currently maintained by Ledell Wu, Fabio Petroni and Martin Josifoski. 
+
+## Troubleshooting
+
+If the module cannot be found, preface the python command with `PYTHONPATH=.`
+
+## License
+BLINK is MIT licensed. See the [LICENSE](LICENSE) file for details.
