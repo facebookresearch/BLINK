@@ -143,12 +143,9 @@ class CrossEncoderRanker(torch.nn.Module):
 
         return embedding_ctxt.view(-1, num_cand)
 
-    def forward(self, input_idx, label_input, context_len, forward_only=True):
+    def forward(self, input_idx, label_input, context_len):
         scores = self.score_candidate(input_idx, context_len)
-        if forward_only:
-            loss = None
-        else:
-            loss = F.cross_entropy(scores, label_input, reduction="mean")
+        loss = F.cross_entropy(scores, label_input, reduction="mean")
         return loss, scores
 
 

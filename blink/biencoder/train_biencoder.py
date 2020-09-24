@@ -26,8 +26,7 @@ from pytorch_transformers.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_transformers.optimization import WarmupLinearSchedule
 from pytorch_transformers.tokenization_bert import BertTokenizer
 
-import blink.candidate_retrieval.utils
-from blink.crossencoder.crossencoder import CrossEncoderRanker
+from blink.biencoder.biencoder import BiEncoderRanker
 import logging
 
 import blink.candidate_ranking.utils as utils
@@ -39,30 +38,14 @@ from blink.common.params import BlinkParser
 
 logger = None
 
-
-def modify(context_input, candidate_input, max_seq_length):
-    new_input = []
-    context_input = context_input.tolist()
-    candidate_input = candidate_input.tolist()
-
-    for i in range(len(context_input)):
-        cur_input = context_input[i]
-        cur_candidate = candidate_input[i]
-        mod_input = []
-        for j in range(len(cur_candidate)):
-            # remove [CLS] token from candidate
-            sample = cur_input + cur_candidate[j][1:]
-            sample = sample[:max_seq_length]
-            mod_input.append(sample)
-
-        new_input.append(mod_input)
-
-    return torch.LongTensor(new_input)
-
-
-def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=True):
+# The evaluate function during training uses in-batch negatives:
+# for a batch of size B, the labels from the batch are used as label candidates
+# B is controlled by the parameter eval_batch_size
+def evaluate(
+    reranker, eval_dataloader, params, device, logger,
+):
     reranker.model.eval()
-    if silent:
+    if params["silent"]:
         iter_ = eval_dataloader
     else:
         iter_ = tqdm(eval_dataloader, desc="Evaluation")
@@ -73,21 +56,20 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
     nb_eval_examples = 0
     nb_eval_steps = 0
 
-    all_logits = []
-
     for step, batch in enumerate(iter_):
         batch = tuple(t.to(device) for t in batch)
-        context_input, label_input = batch
+        context_input, candidate_input, _, _ = batch
         with torch.no_grad():
-            eval_loss, logits = reranker(context_input, label_input, context_length)
+            eval_loss, logits = reranker(context_input, candidate_input)
 
         logits = logits.detach().cpu().numpy()
-        label_ids = label_input.cpu().numpy()
-
+        # Using in-batch negatives, the label ids are diagonal
+        label_ids = torch.LongTensor(
+                torch.arange(params["eval_batch_size"])
+        ).numpy()
         tmp_eval_accuracy = utils.accuracy(logits, label_ids)
 
         eval_accuracy += tmp_eval_accuracy
-        all_logits.extend(logits)
 
         nb_eval_examples += context_input.size(0)
         nb_eval_steps += 1
@@ -95,7 +77,6 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
     normalized_eval_accuracy = eval_accuracy / nb_eval_examples
     logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
     results["normalized_accuracy"] = normalized_eval_accuracy
-    results["logits"] = all_logits
     return results
 
 
@@ -131,7 +112,7 @@ def main(params):
     logger = utils.get_logger(params["output_path"])
 
     # Init model
-    reranker = CrossEncoderRanker(params)
+    reranker = BiEncoderRanker(params)
     tokenizer = reranker.tokenizer
     model = reranker.model
 
@@ -164,59 +145,52 @@ def main(params):
     if reranker.n_gpu > 0:
         torch.cuda.manual_seed_all(seed)
 
-    max_seq_length = params["max_seq_length"]
-    context_length = params["max_context_length"]
-    
-    fname = os.path.join(params["data_path"], "train.t7")
-    train_data = torch.load(fname)
-    context_input = train_data["context_vecs"]
-    candidate_input = train_data["cand_vecs"]
-    label_input = train_data["labels"]
-    if params["debug"]:
-        max_n = 200
-        context_input = context_input[:max_n]
-        candidate_input = candidate_input[:max_n]
-        label_input = label_input[:max_n]
+    # Load train data
+    train_samples = utils.read_dataset("train", params["data_path"])
+    logger.info("Read %d train samples." % len(train_samples))
 
-    context_input = modify(context_input, candidate_input, max_seq_length)
-
-    train_tensor_data = TensorDataset(context_input, label_input)
-    train_sampler = RandomSampler(train_tensor_data)
+    train_data, train_tensor_data = data.process_mention_data(
+        train_samples,
+        tokenizer,
+        params["max_context_length"],
+        params["max_cand_length"],
+        context_key=params["context_key"],
+        silent=params["silent"],
+        logger=logger,
+        debug=params["debug"],
+    )
+    if params["shuffle"]:
+        train_sampler = RandomSampler(train_tensor_data)
+    else:
+        train_sampler = SequentialSampler(train_tensor_data)
 
     train_dataloader = DataLoader(
-        train_tensor_data, 
-        sampler=train_sampler, 
-        batch_size=params["train_batch_size"]
+        train_tensor_data, sampler=train_sampler, batch_size=train_batch_size
     )
 
-    max_n = 2048
-    if params["debug"]:
-        max_n = 200
-    fname = os.path.join(params["data_path"], "valid.t7")
-    valid_data = torch.load(fname)
-    context_input = valid_data["context_vecs"][:max_n]
-    candidate_input = valid_data["cand_vecs"][:max_n]
-    label_input = valid_data["labels"][:max_n]
+    # Load eval data
+    # TODO: reduce duplicated code here
+    valid_samples = utils.read_dataset("valid", params["data_path"])
+    logger.info("Read %d valid samples." % len(valid_samples))
 
-    context_input = modify(context_input, candidate_input, max_seq_length)
-
-    valid_tensor_data = TensorDataset(context_input, label_input)
+    valid_data, valid_tensor_data = data.process_mention_data(
+        valid_samples,
+        tokenizer,
+        params["max_context_length"],
+        params["max_cand_length"],
+        context_key=params["context_key"],
+        silent=params["silent"],
+        logger=logger,
+        debug=params["debug"],
+    )
     valid_sampler = SequentialSampler(valid_tensor_data)
-
     valid_dataloader = DataLoader(
-        valid_tensor_data, 
-        sampler=valid_sampler, 
-        batch_size=params["eval_batch_size"]
+        valid_tensor_data, sampler=valid_sampler, batch_size=eval_batch_size
     )
 
     # evaluate before training
     results = evaluate(
-        reranker,
-        valid_dataloader,
-        device=device,
-        logger=logger,
-        context_length=context_length,
-        silent=params["silent"],
+        reranker, valid_dataloader, params, device=device, logger=logger,
     )
 
     number_of_samples_per_dataset = {}
@@ -241,7 +215,6 @@ def main(params):
     best_score = -1
 
     num_train_epochs = params["num_train_epochs"]
-
     for epoch_idx in trange(int(num_train_epochs), desc="Epoch"):
         tr_loss = 0
         results = None
@@ -251,11 +224,10 @@ def main(params):
         else:
             iter_ = tqdm(train_dataloader, desc="Batch")
 
-        part = 0
         for step, batch in enumerate(iter_):
             batch = tuple(t.to(device) for t in batch)
-            context_input, label_input = batch
-            loss, _ = reranker(context_input, label_input, context_length)
+            context_input, candidate_input, _, _ = batch
+            loss, _ = reranker(context_input, candidate_input)
 
             # if n_gpu > 1:
             #     loss = loss.mean() # mean() to average on multi-gpu.
@@ -288,19 +260,8 @@ def main(params):
             if (step + 1) % (params["eval_interval"] * grad_acc_steps) == 0:
                 logger.info("Evaluation on the development dataset")
                 evaluate(
-                    reranker,
-                    valid_dataloader,
-                    device=device,
-                    logger=logger,
-                    context_length=context_length,
-                    silent=params["silent"],
+                    reranker, valid_dataloader, params, device=device, logger=logger,
                 )
-                logger.info("***** Saving fine - tuned model *****")
-                epoch_output_folder_path = os.path.join(
-                    model_output_path, "epoch_{}_{}".format(epoch_idx, part)
-                )
-                part += 1
-                utils.save_model(model, tokenizer, epoch_output_folder_path)
                 model.train()
                 logger.info("\n")
 
@@ -309,16 +270,10 @@ def main(params):
             model_output_path, "epoch_{}".format(epoch_idx)
         )
         utils.save_model(model, tokenizer, epoch_output_folder_path)
-        # reranker.save(epoch_output_folder_path)
 
         output_eval_file = os.path.join(epoch_output_folder_path, "eval_results.txt")
         results = evaluate(
-            reranker,
-            valid_dataloader,
-            device=device,
-            logger=logger,
-            context_length=context_length,
-            silent=params["silent"],
+            reranker, valid_dataloader, params, device=device, logger=logger,
         )
 
         ls = [best_score, results["normalized_accuracy"]]
@@ -340,9 +295,11 @@ def main(params):
     params["path_to_model"] = os.path.join(
         model_output_path, "epoch_{}".format(best_epoch_idx)
     )
-    # utils.save_model(reranker.model, tokenizer, model_output_path)
-    # reranker = utils.get_biencoder(params)
-    # reranker.save(model_output_path)
+    utils.save_model(reranker.model, tokenizer, model_output_path)
+
+    if params["evaluate"]:
+        params["path_to_model"] = model_output_path
+        evaluate(params, logger=logger)
 
 
 if __name__ == "__main__":
