@@ -33,8 +33,8 @@ pip install -r requirements.txt
 
 2. Download the models and entity embeddings
 ```console
-chmod +x download_models.sh
-./download_models.sh
+chmod +x download_elq_models.sh
+./download_elq_models.sh
 ```
 
 ## Interactive Mode
