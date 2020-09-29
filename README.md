@@ -7,11 +7,11 @@ The process of linking entities to Wikipedia is also known as [Wikification](htt
 
 
 ### news
-- (September 2020) added [ELQ](https://github.com/facebookresearch/BLINK/tree/master/elq) support in BLINK - end-to-end entity linking on questions
+- (September 2020) added [ELQ](https://github.com/facebookresearch/BLINK/tree/master/elq) - end-to-end entity linking on questions
 - (3 July 2020) added [FAISS](https://github.com/facebookresearch/faiss) support in BLINK - efficient exact/approximate retrieval
 
 
-## BLINK architecture:
+## BLINK architecture
 
 The BLINK architecture is described in the following paper:
 
