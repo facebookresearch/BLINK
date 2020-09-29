@@ -7,7 +7,8 @@ The process of linking entities to Wikipedia is also known as [Wikification](htt
 
 
 ### news
-- (3 July 2020) addedd [FAISS](https://github.com/facebookresearch/faiss) support in BLINK - efficient exact/approximate retrieval
+- (September 2020) added [ELQ](https://github.com/facebookresearch/BLINK/elq) support in BLINK - end-to-end entity linking on questions
+- (3 July 2020) added [FAISS](https://github.com/facebookresearch/faiss) support in BLINK - efficient exact/approximate retrieval
 
 
 ## BLINK architecture:
@@ -42,8 +43,8 @@ pip install -r requirements.txt
 
 The BLINK pretrained models can be downloaded using the following script:
 ```console
-chmod +x download_models.sh
-./download_models.sh
+chmod +x download_blink_models.sh
+./download_blink_models.sh
 ```
 
 We additionally provide a [FAISS](https://github.com/facebookresearch/faiss) indexer in BLINK, which enables efficient exact/approximate retrieval for biencoder model.
