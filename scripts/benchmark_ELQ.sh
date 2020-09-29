@@ -14,13 +14,13 @@ python elq/main_dense.py --threshold=-2.9 \
 # wikipedia-trained, qa finetuned
 echo ""
 echo "Finetuned on WebQSP, WebQSP eval"
-python elq/main_dense.py --threshold=-2.9 \
+python elq/main_dense.py --threshold=-1.5 \
 	--test_mentions EL4QA_data/WebQSP_EL/tokenized/test.jsonl \
 	--biencoder_model models/elq_webqsp_large.bin \
 	--eval_batch_size 64 --max_context_length 32
 echo ""
 echo "Finetuned on WebQSP, graphquestions eval"
-python elq/main_dense.py --threshold=-2.9 \
+python elq/main_dense.py --threshold=-0.9 \
 	--test_mentions EL4QA_data/graphquestions_EL/tokenized/test.jsonl \
 	--biencoder_model models/elq_webqsp_large.bin \
 	--eval_batch_size 64 --max_context_length 32
