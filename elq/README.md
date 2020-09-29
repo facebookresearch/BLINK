@@ -4,7 +4,8 @@ ELQ (<ins>E</ins>ntity <ins>L</ins>inking for <ins>Q</ins>uestions) is an python
 
 ***NOTE: THE FOLLOWING COMMANDS ARE ALL INTENDED TO BE RUN FROM THE PARENT DIRECTORY (i.e. `BLINK` rather than `BLINK/elq`)***
 
-## ELQ architecture:
+
+## ELQ architecture
 
 The ELQ architecture is described in the following paper:
 
@@ -21,7 +22,6 @@ The ELQ architecture is described in the following paper:
 The question entity linking data is under http://dl.fbaipublicfiles.com/elq/EL4QA_data.tar.gz
 
 
-
 ## Setup
 1. Create conda environment and install requirements (this step can be skipped if you've already created an environment for BLINK)
 ```console
@@ -35,7 +35,7 @@ chmod +x download_elq_models.sh
 ./download_elq_models.sh
 ```
 
-To download the flat (exact search) indexer, you may use the same flat index as BLINK: [BLINK flat index](http://dl.fbaipublicfiles.com/BLINK//faiss_flat_index.pkl)
+To download the flat (exact search) indexer, you may use the same flat index as BLINK: [BLINK flat index](http://dl.fbaipublicfiles.com/BLINK/faiss_flat_index.pkl)
 
 To build and save FAISS (exact search) index yourself, run
 `python blink/build_faiss_index.py --output_path models/faiss_flat_index.pkl`
@@ -55,14 +55,8 @@ You may also optionally change the threshold for each question, which allows you
 Higher threholds decreases the number of output candidates (up to `0.0`). Lower thresholds increases the number of output candidates.
 
 By default, ELQ uses approximate search with a FAISS hnsw index. For exact search, you can:
-1. run ELQ without an index:
-```console
-python elq/main_dense.py -i --faiss_index none
-```
-2. run ELQ with an exact flat index:
-```console
-python elq/main_dense.py -i --faiss_index flat --index_path models/faiss_flat_index.pkl
-```
+1. run ELQ without an index: by specifying `--faiss_index none`
+2. run ELQ with an exact flat index: by specifying `--faiss_index flat --index_path models/faiss_flat_index.pkl`
 
 
 ## Use ELQ in your codebase
