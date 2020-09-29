@@ -9,7 +9,6 @@ import json
 import sys
 from elq.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer, DenseIVFFlatIndexer
 
-from tqdm import tqdm
 import logging
 import torch
 import numpy as np
@@ -96,12 +95,10 @@ def _load_candidates(
     faiss_index="none", index_path=None,
     logger=None,
 ):
-    if logger: logger.info("Loading candidate encodings")
     if faiss_index == "none":
         candidate_encoding = torch.load(entity_encoding)
         indexer = None
     else:
-        if logger: logger.info("Using faiss index to retrieve entities.")
         candidate_encoding = None
         assert index_path is not None, "Error! Empty indexer path."
         if faiss_index == "flat":
@@ -115,7 +112,6 @@ def _load_candidates(
         indexer.deserialize_from(index_path)
 
     candidate_encoding = torch.load(entity_encoding)
-    if logger: logger.info("Finished loading candidate encodings")
 
     if not os.path.exists("models/id2title.json"):
         id2title = {}
@@ -137,13 +133,10 @@ def _load_candidates(
     else:
         if logger: logger.info("Loading id2title")
         id2title = json.load(open("models/id2title.json"))
-        if logger: logger.info("Finish loading id2title")
         if logger: logger.info("Loading id2text")
         id2text = json.load(open("models/id2text.json"))
-        if logger: logger.info("Finish loading id2text")
         if logger: logger.info("Loading id2wikidata")
         id2wikidata = json.load(open("models/id2wikidata.json"))
-        if logger: logger.info("Finish loading id2wikidata")
 
     return (
         candidate_encoding, indexer, 
@@ -177,7 +170,7 @@ def _get_test_samples(
         "text": "who is governor of ohio 2011?",
     }
     """
-    if logger: logger.info("Loading test samples....")
+    if logger: logger.info("Loading test samples")
     test_samples = []
     unknown_entity_samples = []
     num_unknown_entity_samples = 0
@@ -188,11 +181,9 @@ def _get_test_samples(
         lines = fin.readlines()
         sample_idx = 0
         do_setup_samples = True
-        for i, line in enumerate(tqdm(lines)):
+        for i, line in enumerate(lines):
             record = json.loads(line)
             test_samples.append(record)
-
-    if logger: logger.info("Finished loading test samples")
 
     return test_samples, num_unknown_entity_samples
 
@@ -611,11 +602,8 @@ def display_metrics(
 
 
 def load_models(args, logger):
-    if not logger:
-        logger = utils.get_logger(args.output_path)
-        logger.setLevel(10)
     # load biencoder model
-    if logger: logger.info("loading biencoder model")
+    if logger: logger.info("Loading biencoder model")
     try:
         with open(args.biencoder_config) as json_file:
             biencoder_params = json.load(json_file)
@@ -645,7 +633,7 @@ def load_models(args, logger):
         biencoder.model = torch.nn.DataParallel(biencoder.model)
 
     # load candidate entities
-    if logger: logger.info("loading candidate entities")
+    if logger: logger.info("Loading candidate entities")
 
     (
         candidate_encoding,
@@ -756,11 +744,10 @@ def run(
         else:
             samples = test_data
 
-        if logger: logger.info("Preparing data for biencoder....")
+        if logger: logger.info("Preparing data for biencoder")
         dataloader = _process_biencoder_dataloader(
-            samples, biencoder.tokenizer, biencoder_params, logger,
+            samples, biencoder.tokenizer, biencoder_params, None,
         )
-        if logger: logger.info("Finished preparing data for biencoder")
 
         stopping_condition = True
 
@@ -802,8 +789,8 @@ def run(
             pred_mention_bounds, id2title, threshold=threshold,
             mention_threshold=mention_threshold,
         )
-        
-        print()
+
+        print("*--------*")
         if num_gold > 0:
             print("WEAK MATCHING")
             display_metrics(num_correct_weak, num_predicted, num_gold)
@@ -816,6 +803,7 @@ def run(
             display_metrics(num_correct_strong_from_input_window, num_predicted, num_gold_from_input_window)
             print("*--------*")
             print("biencoder runtime = {}".format(runtime))
+            print("*--------*")
 
         return all_entity_preds
 
@@ -951,11 +939,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_cuda", dest="use_cuda", action="store_true", default=False, help="run on gpu"
     )
+    parser.add_argument(
+        "--no_logger", dest="no_logger", action="store_true", default=False, help="don't log progress"
+    )
+
 
     args = parser.parse_args()
 
-    logger = utils.get_logger(args.output_path)
-    logger.setLevel(10)
+    logger = None
+    if not args.no_logger:
+        logger = utils.get_logger(args.output_path)
+        logger.setLevel(10)
 
     models = load_models(args, logger)
     run(args, logger, *models)
+

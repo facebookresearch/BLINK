@@ -514,7 +514,7 @@ def process_mention_data(
 
     if candidate_token_ids is None and not debug:
         candidate_token_ids = torch.load(params["cand_token_ids_path"])
-        logger.info("Loaded saved entities info")
+        if logger: logger.info("Loaded saved entities info")
         extra_ret_values["candidate_token_ids"] = candidate_token_ids
 
     processed_samples = []
@@ -603,9 +603,6 @@ def process_mention_data(
             use_world = False
 
         processed_samples.append(record)
-
-    if logger:
-        logger.info("Finished loading data")
 
     if debug and logger:
         logger.info("====Processed samples: ====")
@@ -707,6 +704,4 @@ def process_mention_data(
         os.makedirs(saved_context_dir, exist_ok=True)
         torch.save(data, os.path.join(saved_context_dir, "data.pt"))
         torch.save(tensor_data_tuple, os.path.join(saved_context_dir, "tensor_tuple.pt"))
-    if logger:
-        logger.info("Created tensor dataset")
     return data, tensor_data_tuple, extra_ret_values

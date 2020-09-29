@@ -84,19 +84,18 @@ then
 else
     entity_encoding=experiments/${dir}/${model_folder}/entity_encoding/all.t7
 fi
-echo ${mentions_file}
 
 command="python elq/main_dense.py \
-    --test_mentions ${mentions_file} \
-    --test_entities models/entity.jsonl \
-    --entity_catalogue models/entity.jsonl \
-    --entity_encoding ${entity_encoding} \
-    --biencoder_model ${biencoder_model} \
-    --biencoder_config ${biencoder_config} \
-    --save_preds_dir ${output_dir}/${test_questions}_${subset}_${model_full}_top${top_k}cands_thresh${threshold}${save_dir_batch} \
-    ${threshold_args} --num_cand_mentions ${top_k} --num_cand_entities 10 \
-    --eval_batch_size ${eval_batch_size} ${cuda_args} ${max_context_length_args} \
-    --faiss_index hnsw --index_path models/faiss_hnsw_index.pkl"
+--test_mentions ${mentions_file} \
+--test_entities models/entity.jsonl \
+--entity_catalogue models/entity.jsonl \
+--entity_encoding ${entity_encoding} \
+--biencoder_model ${biencoder_model} \
+--biencoder_config ${biencoder_config} \
+--save_preds_dir ${output_dir}/${test_questions}_${subset}_${model_full}_top${top_k}cands_thresh${threshold}${save_dir_batch} \
+${threshold_args} --num_cand_mentions ${top_k} --num_cand_entities 10 \
+--eval_batch_size ${eval_batch_size} ${cuda_args} ${max_context_length_args} \
+--faiss_index hnsw --index_path models/faiss_hnsw_index.pkl"
 
 echo "${command}"
 
