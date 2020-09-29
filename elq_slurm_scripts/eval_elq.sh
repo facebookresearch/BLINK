@@ -1,21 +1,3 @@
-#!/bin/sh
-#SBATCH --output=log/%j.out
-#SBATCH --error=log/%j.err
-#SBATCH --partition=learnfair
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --signal=USR1
-#SBATCH --mem=400000
-#SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=24
-#SBATCH --time 3000
-#SBATCH --constraint=volta32gb
-
-# example usage
-# bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
-# bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
-# bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_false_bert_large_qa_linear' joint 0.25 100 joint_0
-
 test_questions=$1  # WebQSP_EL/AIDA-YAGO2/graphquestions_EL
 subset=$2  # test/dev/train_only
 model_full=$3  # finetuned_webqsp/wiki_all_ents/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/

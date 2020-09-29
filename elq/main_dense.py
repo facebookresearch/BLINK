@@ -96,13 +96,12 @@ def _load_candidates(
     faiss_index="none", index_path=None,
     logger=None,
 ):
-    logger.info("Loading candidate encodings")
+    if logger: logger.info("Loading candidate encodings")
     if faiss_index == "none":
         candidate_encoding = torch.load(entity_encoding)
         indexer = None
     else:
-        if logger:
-            logger.info("Using faiss index to retrieve entities.")
+        if logger: logger.info("Using faiss index to retrieve entities.")
         candidate_encoding = None
         assert index_path is not None, "Error! Empty indexer path."
         if faiss_index == "flat":
@@ -116,7 +115,7 @@ def _load_candidates(
         indexer.deserialize_from(index_path)
 
     candidate_encoding = torch.load(entity_encoding)
-    logger.info("Finished loading candidate encodings")
+    if logger: logger.info("Finished loading candidate encodings")
 
     if not os.path.exists("models/id2title.json"):
         id2title = {}
@@ -136,15 +135,15 @@ def _load_candidates(
         json.dump(id2text, open("models/id2text.json", "w"))
         json.dump(id2wikidata, open("models/id2wikidata.json", "w"))
     else:
-        logger.info("Loading id2title")
+        if logger: logger.info("Loading id2title")
         id2title = json.load(open("models/id2title.json"))
-        logger.info("Finish loading id2title")
-        logger.info("Loading id2text")
+        if logger: logger.info("Finish loading id2title")
+        if logger: logger.info("Loading id2text")
         id2text = json.load(open("models/id2text.json"))
-        logger.info("Finish loading id2text")
-        logger.info("Loading id2wikidata")
+        if logger: logger.info("Finish loading id2text")
+        if logger: logger.info("Loading id2wikidata")
         id2wikidata = json.load(open("models/id2wikidata.json"))
-        logger.info("Finish loading id2wikidata")
+        if logger: logger.info("Finish loading id2wikidata")
 
     return (
         candidate_encoding, indexer, 
@@ -178,7 +177,7 @@ def _get_test_samples(
         "text": "who is governor of ohio 2011?",
     }
     """
-    logger.info("Loading test samples....")
+    if logger: logger.info("Loading test samples....")
     test_samples = []
     unknown_entity_samples = []
     num_unknown_entity_samples = 0
@@ -193,7 +192,7 @@ def _get_test_samples(
             record = json.loads(line)
             test_samples.append(record)
 
-    logger.info("Finished loading test samples")
+    if logger: logger.info("Finished loading test samples")
 
     return test_samples, num_unknown_entity_samples
 
@@ -466,7 +465,7 @@ def get_predictions(
             for idx, mb in enumerate(e_mention_bounds):
                 mb[1] += 1  # prediction was inclusive, now make exclusive
                 # check if in existing mentions
-                if mention_masked_utterance[mb[0]:mb[1]].sum() >= 1:
+                if args.threshold_type != "top_entity_by_mention" and mention_masked_utterance[mb[0]:mb[1]].sum() >= 1:
                     continue
                 e_mention_bounds_pruned.append(mb)
                 all_pred_entities_pruned.append(all_pred_entities[idx])
@@ -578,12 +577,12 @@ def get_predictions(
 
 
 def _save_biencoder_outs(save_preds_dir, nns, dists, pred_mention_bounds, cand_scores, mention_scores, runtime):
-    np.save(os.path.join(args.save_preds_dir, "biencoder_nns.npy"), nns)
-    np.save(os.path.join(args.save_preds_dir, "biencoder_dists.npy"), dists)
-    np.save(os.path.join(args.save_preds_dir, "biencoder_mention_bounds.npy"), pred_mention_bounds)
-    np.save(os.path.join(args.save_preds_dir, "biencoder_cand_scores.npy"), cand_scores)
-    np.save(os.path.join(args.save_preds_dir, "biencoder_mention_scores.npy"), mention_scores)
-    with open(os.path.join(args.save_preds_dir, "runtime.txt"), "w") as wf:
+    np.save(os.path.join(save_preds_dir, "biencoder_nns.npy"), nns)
+    np.save(os.path.join(save_preds_dir, "biencoder_dists.npy"), dists)
+    np.save(os.path.join(save_preds_dir, "biencoder_mention_bounds.npy"), pred_mention_bounds)
+    np.save(os.path.join(save_preds_dir, "biencoder_cand_scores.npy"), cand_scores)
+    np.save(os.path.join(save_preds_dir, "biencoder_mention_scores.npy"), mention_scores)
+    with open(os.path.join(save_preds_dir, "runtime.txt"), "w") as wf:
         wf.write(str(runtime))
 
 
@@ -612,8 +611,11 @@ def display_metrics(
 
 
 def load_models(args, logger):
+    if not logger:
+        logger = utils.get_logger(args.output_path)
+        logger.setLevel(10)
     # load biencoder model
-    logger.info("loading biencoder model")
+    if logger: logger.info("loading biencoder model")
     try:
         with open(args.biencoder_config) as json_file:
             biencoder_params = json.load(json_file)
@@ -628,8 +630,8 @@ def load_models(args, logger):
                 break
     biencoder_params["path_to_model"] = args.biencoder_model
     biencoder_params["cand_token_ids_path"] = args.cand_token_ids_path
-    biencoder_params["eval_batch_size"] = args.eval_batch_size
-    biencoder_params["no_cuda"] = not args.use_cuda
+    biencoder_params["eval_batch_size"] = getattr(args, 'eval_batch_size', 8)
+    biencoder_params["no_cuda"] = (not getattr(args, 'use_cuda', False) or not torch.cuda.is_available())
     if biencoder_params["no_cuda"]:
         biencoder_params["data_parallel"] = False
     biencoder_params["load_cand_enc_only"] = False
@@ -637,13 +639,13 @@ def load_models(args, logger):
         biencoder_params["max_context_length"] = args.max_context_length
     # biencoder_params["mention_aggregation_type"] = args.mention_aggregation_type
     biencoder = load_biencoder(biencoder_params)
-    if not args.use_cuda and type(biencoder.model).__name__ == 'DataParallel':
+    if biencoder_params["no_cuda"] and type(biencoder.model).__name__ == 'DataParallel':
         biencoder.model = biencoder.model.module
-    elif args.use_cuda and type(biencoder.model).__name__ != 'DataParallel':
+    elif not biencoder_params["no_cuda"] and type(biencoder.model).__name__ != 'DataParallel':
         biencoder.model = torch.nn.DataParallel(biencoder.model)
 
     # load candidate entities
-    logger.info("loading candidate entities")
+    if logger: logger.info("loading candidate entities")
 
     (
         candidate_encoding,
@@ -677,22 +679,20 @@ def run(
     id2title,
     id2text,
     id2wikidata,
+    test_data=None,
 ):
 
-    if not args.test_mentions and not args.interactive:
+    if not test_data and not getattr(args, 'test_mentions', None) and not getattr(args, 'interactive', None):
         msg = (
             "ERROR: either you start BLINK with the "
             "interactive option (-i) or you pass in input test mentions (--test_mentions)"
-            "and test entities (--test_entities)"
+            "and test entities (--test_entities) or manually pass in test data"
         )
         raise ValueError(msg)
     
     if getattr(args, 'save_preds_dir', None) is not None and not os.path.exists(args.save_preds_dir):
         os.makedirs(args.save_preds_dir)
         print("Saving preds in {}".format(args.save_preds_dir))
-
-    print(args)
-    print(args.output_path)
 
     stopping_condition = False
     threshold = float(args.threshold)
@@ -704,7 +704,7 @@ def run(
     if args.interactive:
         while not stopping_condition:
 
-            logger.info("interactive mode")
+            if logger: logger.info("interactive mode")
 
             # Interactive
             text = input("insert text: ")
@@ -741,32 +741,36 @@ def run(
                 if action == "c":
                     print("Current threshold {}".format(threshold))
                     while True:
+                        threshold = input("New threshold (increase for less cands, decrease for more cands): ")
                         try:
-                            threshold = float(input("New threshold (increase for less cands, decrease for more cands): "))
+                            threshold = float(threshold)
                             break
                         except:
-                            print("Error expected float, got {}".format(threshold))
+                            print("Error! Expected float, got {}. Try again.".format(threshold))
     
     else:
-        samples = None
+        if not test_data:
+            samples, num_unk = _get_test_samples(
+                args.test_mentions, args.test_entities, logger,
+            )
+        else:
+            samples = test_data
 
-        samples, num_unk = _get_test_samples(
-            args.test_mentions, args.test_entities, logger,
-        )
-        logger.info("Preparing data for biencoder....")
+        if logger: logger.info("Preparing data for biencoder....")
         dataloader = _process_biencoder_dataloader(
             samples, biencoder.tokenizer, biencoder_params, logger,
         )
-        logger.info("Finished preparing data for biencoder")
+        if logger: logger.info("Finished preparing data for biencoder")
 
         stopping_condition = True
 
         # prepare the data for biencoder
         # run biencoder if predictions not saved
-        if not os.path.exists(os.path.join(args.save_preds_dir, 'biencoder_mention_bounds.npy')):
+        if not getattr(args, 'save_preds_dir', None) or not os.path.exists(
+                os.path.join(args.save_preds_dir, 'biencoder_mention_bounds.npy')):
 
             # run biencoder
-            logger.info("Running biencoder...")
+            if logger: logger.info("Running biencoder...")
 
             start_time = time.time()
             nns, dists, pred_mention_bounds, mention_scores, cand_scores = _run_biencoder(
@@ -776,13 +780,14 @@ def run(
                 threshold=mention_threshold, indexer=indexer,
             )
             end_time = time.time()
-            logger.info("Finished running biencoder")
+            if logger: logger.info("Finished running biencoder")
 
             runtime = end_time - start_time
             
-            _save_biencoder_outs(
-                args.save_preds_dir, nns, dists, pred_mention_bounds, cand_scores, mention_scores, runtime,
-            )
+            if getattr(args, 'save_preds_dir', None):
+                _save_biencoder_outs(
+                    args.save_preds_dir, nns, dists, pred_mention_bounds, cand_scores, mention_scores, runtime,
+                )
         else:
             nns, dists, pred_mention_bounds, cand_scores, mention_scores, runtime = _load_biencoder_outs(args.save_preds_dir)
 
@@ -811,6 +816,8 @@ def run(
             display_metrics(num_correct_strong_from_input_window, num_predicted, num_gold_from_input_window)
             print("*--------*")
             print("biencoder runtime = {}".format(runtime))
+
+        return all_entity_preds
 
 
 if __name__ == "__main__":

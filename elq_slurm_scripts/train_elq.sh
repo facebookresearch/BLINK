@@ -1,17 +1,3 @@
-#!/bin/sh
-#SBATCH --output=log/%j.out
-#SBATCH --error=log/%j.err
-#SBATCH --partition=priority
-#SBATCH --comment=leaving0911
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --signal=USR1
-#SBATCH --mem=400000
-#SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=24
-#SBATCH --time 3000
-#SBATCH --constraint=volta32gb
-
 data=$1  # webqsp/graphqs/wiki_all_ents/custom full(!) filepath
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none/none_no_mentions
 objective=$3  # train/finetune/predict
