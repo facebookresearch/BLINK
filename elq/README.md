@@ -124,12 +124,12 @@ bash scripts/benchmark_ELQ.sh
 
 The following table summarizes the performance of ELQ for the considered datasets.
 
-model | dataset | weak-matching precision | weak-matching recall | weak-matching F1 |
-------------- | ------------- | ------------- | ------------- | ------------- |
-Wikipedia-trained | WebQSP_EL test | 0.8607 | 0.8181 | 0.8389 |
-Wikipedia-train | graphquestions_EL test | 0.6975 | 0.6975 | 0.6975 |
-Finetuned on WebQSP | WebQSP_EL test | 0.9109 | 0.8815 | 0.8960 |
-Finetune on WebQSP | graphquestions_EL test | 0.7394 | 0.6700 | 0.7030 |
+model | dataset | threshold | weak-match precision | weak-match recall | weak-match F1 | EM precision | EM recall | EM F1 | 
+------------- | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
+Wikipedia-trained | WebQSP_EL test | -2.9 | 0.8607 | 0.8181 | 0.8389 | 0.8607 | 0.7975 | 0.7581 | 0.7773 |
+Wikipedia-train | graphquestions_EL test | -2.9 | 0.6975 | 0.6975 | 0.6975 | 0.6212 | 0.6212 | 0.6212 |
+Finetuned on WebQSP | WebQSP_EL test | -1.5 | 0.9109 | 0.8815 | 0.8960 | 0.8741 | 0.8459 | 0.8598 |
+Finetune on WebQSP | graphquestions_EL test | -0.9 | 0.7394 | 0.6700 | 0.7030 | 0.6716 | 0.6086 | 0.6386 |
 
 ## Train ELQ
 
