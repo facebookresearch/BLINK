@@ -1,21 +1,3 @@
-#!/bin/sh
-#SBATCH --output=log/%j.out
-#SBATCH --error=log/%j.err
-#SBATCH --partition=learnfair
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --signal=USR1
-#SBATCH --mem=400000
-#SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=24
-#SBATCH --time 3000
-#SBATCH --constraint=volta32gb
-
-# example usage
-# bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
-# bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_bert_large_qa_linear' joint 0.25 100 joint_0
-# bash run_eval_slurm.sh webqsp_filtered dev 'finetuned_webqsp_all_ents;all_mention_biencoder_all_avg_true_20_true_false_bert_large_qa_linear' joint 0.25 100 joint_0
-
 test_questions=$1  # WebQSP_EL/AIDA-YAGO2/graphquestions_EL
 subset=$2  # test/dev/train_only
 model_full=$3  # finetuned_webqsp/wiki_all_ents/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/
@@ -102,19 +84,18 @@ then
 else
     entity_encoding=experiments/${dir}/${model_folder}/entity_encoding/all.t7
 fi
-echo ${mentions_file}
 
 command="python elq/main_dense.py \
-    --test_mentions ${mentions_file} \
-    --test_entities models/entity.jsonl \
-    --entity_catalogue models/entity.jsonl \
-    --entity_encoding ${entity_encoding} \
-    --biencoder_model ${biencoder_model} \
-    --biencoder_config ${biencoder_config} \
-    --save_preds_dir ${output_dir}/${test_questions}_${subset}_${model_full}_top${top_k}cands_thresh${threshold}${save_dir_batch} \
-    ${threshold_args} --num_cand_mentions ${top_k} --num_cand_entities 10 \
-    --eval_batch_size ${eval_batch_size} ${cuda_args} ${max_context_length_args} \
-    --faiss_index hnsw --index_path models/faiss_hnsw_index.pkl"
+--test_mentions ${mentions_file} \
+--test_entities models/entity.jsonl \
+--entity_catalogue models/entity.jsonl \
+--entity_encoding ${entity_encoding} \
+--biencoder_model ${biencoder_model} \
+--biencoder_config ${biencoder_config} \
+--save_preds_dir ${output_dir}/${test_questions}_${subset}_${model_full}_top${top_k}cands_thresh${threshold}${save_dir_batch} \
+${threshold_args} --num_cand_mentions ${top_k} --num_cand_entities 10 \
+--eval_batch_size ${eval_batch_size} ${cuda_args} ${max_context_length_args} \
+--faiss_index hnsw --index_path models/faiss_hnsw_index.pkl"
 
 echo "${command}"
 

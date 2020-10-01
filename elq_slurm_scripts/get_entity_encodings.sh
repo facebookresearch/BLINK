@@ -1,16 +1,3 @@
-#!/bin/sh
-#SBATCH --output=%j.out
-#SBATCH --error=%j.err
-#SBATCH --partition=learnfair
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --signal=USR1
-#SBATCH --mem=200000
-#SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=24
-#SBATCH --time 3000
-#SBATCH --constraint=volta32gb
-
 data=$1  # wiki_all_ents/webqsp_all_ents/zeshel/pretrain/zero_shot (ledell's model)
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none
 context_length=$3  # 16/128
@@ -28,7 +15,7 @@ do
     if [ ! -f "${save_dir}/${start}_${end}.t7" ]
     then
         echo ${data} ${mention_agg_type} ${start}
-        sbatch train_biencoder.sh \
+        bash elq_slurm_scripts/train_elq.sh \
             ${data} ${mention_agg_type} predict 512 \
             ${context_length} ${load_saved_cand_encs} ${adversarial} \
             ${model_size} qa_linear ${start} ${end} ${latest_epoch}
