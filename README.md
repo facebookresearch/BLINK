@@ -7,10 +7,11 @@ The process of linking entities to Wikipedia is also known as [Wikification](htt
 
 
 ### news
-- (3 July 2020) addedd [FAISS](https://github.com/facebookresearch/faiss) support in BLINK - efficient exact/approximate retrieval
+- (September 2020) added [ELQ](https://github.com/facebookresearch/BLINK/tree/master/elq) - end-to-end entity linking on questions
+- (3 July 2020) added [FAISS](https://github.com/facebookresearch/faiss) support in BLINK - efficient exact/approximate retrieval
 
 
-## BLINK architecture:
+## BLINK architecture
 
 The BLINK architecture is described in the following paper:
 
@@ -28,6 +29,23 @@ The BLINK architecture is described in the following paper:
 In a nutshell, BLINK uses a two stages approach for entity linking, based on fine-tuned BERT architectures. In the first stage, BLINK performs retrieval in a dense space defined by a bi-encoder that independently embeds the mention context and the entity descriptions. Each candidate is then examined more carefully with a cross-encoder, that concatenates the mention and entity text. BLINK achieves state-of-the-art results on multiple datasets.
 
 
+## ELQ architecture
+
+ELQ does end-to-end entity linking on questions. The ELQ architecture is described in the following paper:
+
+```bibtex
+@inproceedings{li2020efficient,
+ title={ Efficient One-Pass End-to-End Entity Linking for Questions },
+ author={ Li, Belinda Z. and Min, Sewon and Iyer, Srinivasan and Mehdad, Yashar and Yih, Wen-tau },
+ booktitle={ EMNLP },
+ year={2020}
+}
+```
+
+For more detail on how to run ELQ, refer to the [ELQ README](https://github.com/facebookresearch/BLINK/tree/master/elq).
+
+
+
 ## Use BLINK
 
 ### 1. Create conda environment and install requirements
@@ -42,8 +60,8 @@ pip install -r requirements.txt
 
 The BLINK pretrained models can be downloaded using the following script:
 ```console
-chmod +x download_models.sh
-./download_models.sh
+chmod +x download_blink_models.sh
+./download_blink_models.sh
 ```
 
 We additionally provide a [FAISS](https://github.com/facebookresearch/faiss) indexer in BLINK, which enables efficient exact/approximate retrieval for biencoder model.
