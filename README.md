@@ -19,8 +19,8 @@ The BLINK architecture is described in the following paper:
 @inproceedings{wu2019zero,
  title={Zero-shot Entity Linking with Dense Entity Retrieval},
  author={Ledell Wu, Fabio Petroni, Martin Josifoski, Sebastian Riedel, Luke Zettlemoyer},
- booktitle={arXiv:1911.03814},
- year={2019}
+ booktitle={EMNLP},
+ year={2020}
 }
 ```
 
@@ -35,9 +35,9 @@ ELQ does end-to-end entity linking on questions. The ELQ architecture is describ
 
 ```bibtex
 @inproceedings{li2020efficient,
- title={ Efficient One-Pass End-to-End Entity Linking for Questions },
- author={ Li, Belinda Z. and Min, Sewon and Iyer, Srinivasan and Mehdad, Yashar and Yih, Wen-tau },
- booktitle={ EMNLP },
+ title={Efficient One-Pass End-to-End Entity Linking for Questions},
+ author={Li, Belinda Z. and Min, Sewon and Iyer, Srinivasan and Mehdad, Yashar and Yih, Wen-tau},
+ booktitle={EMNLP},
  year={2020}
 }
 ```
