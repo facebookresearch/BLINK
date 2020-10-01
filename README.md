@@ -196,9 +196,6 @@ The first version of BLINK uses an [Apache Solr](https://lucene.apache.org/solr)
 This IR-based version is now deprecated since it's outperformed by the current BLINK architecture.
 If you are interested in the old version, please refer to [this README](blink/candidate_retrieval/README.md).
 
-## The BLINK Team
-BLINK is currently maintained by Ledell Wu, Fabio Petroni and Martin Josifoski. 
-
 ## Troubleshooting
 
 If the module cannot be found, preface the python command with `PYTHONPATH=.`
