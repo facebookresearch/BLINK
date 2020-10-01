@@ -38,5 +38,6 @@ setup(
         "pytorch-transformers>=1.2.0",
         "colorama>=0.4.3",
         "termcolor>=1.1.0",
+        "faiss-cpu>=1.6.1",
     ],
 )

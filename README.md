@@ -45,6 +45,7 @@ ELQ does end-to-end entity linking on questions. The ELQ architecture is describ
 For more detail on how to run ELQ, refer to the [ELQ README](https://github.com/facebookresearch/BLINK/tree/master/elq).
 
 
+
 ## Use BLINK
 
 ### 1. Create conda environment and install requirements
