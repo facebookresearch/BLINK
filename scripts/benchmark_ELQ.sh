@@ -1,3 +1,11 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+#
+#!/bin/bash
+
 # wikipedia-trained
 echo "Wikipedia-trained, WebQSP eval"
 python elq/main_dense.py --threshold=-2.9 \

@@ -1,3 +1,10 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+#
+#!/bin/bash
 data=$1  # wiki_all_ents/webqsp_all_ents/zeshel/pretrain/zero_shot (ledell's model)
 mention_agg_type=$2  # all_avg/fl_avg/fl_linear/fl_mlp/none
 context_length=$3  # 16/128

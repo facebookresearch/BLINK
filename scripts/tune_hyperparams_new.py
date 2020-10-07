@@ -1,3 +1,9 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+#
 import json
 import os
 import numpy as np
@@ -55,7 +61,6 @@ def filter_overlaps(tokens, pred_triples, pred_scores):
     all_pred_entities_pruned = []
     all_pred_scores_pruned = []
     mention_masked_utterance = np.zeros(len(tokens))
-    # mention_masked_utterance = np.zeros(len(tokens))
     # ensure well-formed-ness, prune overlaps
     # greedily pick highest scoring, then prune all overlapping
     for idx, mb in enumerate(pred_triples):
@@ -71,7 +76,6 @@ def filter_repeat_overlaps(tokens, pred_triples, pred_scores):
     all_pred_entities_pruned = []
     all_pred_scores_pruned = []
     mention_masked_utterance = {triple[0]: np.zeros(len(tokens)) for triple in pred_triples}
-    # mention_masked_utterance = np.zeros(len(tokens))
     # ensure well-formed-ness, prune overlaps
     # greedily pick highest scoring, then prune all overlapping
     for idx, mb in enumerate(pred_triples):
@@ -92,42 +96,22 @@ def get_threshold_mask_and_sort(mention_dists, cand_dists, biencoder_dists, vali
             False: sort ALL candidates (assumes multiple candidates per mention)
                 scores_mask and sorted_idxs has dim (#_valid_examples, #_cands)
     """
-    # (mention_dists[i][:,0] != -1) & (mention_dists[i][:,0] == mention_dists[i][:,0])
     mention_scores = mention_dists[valid_cands_mask]
     if len(mention_scores.shape) > 1:
         mention_scores = mention_scores[:,0]
-    # scores = 1/(1 + np.exp(-mention_dists[valid_cands_mask])) + torch.log_softmax(torch.tensor(cand_dists[valid_cands_mask]), 1).numpy()
-    # take only the top cands
-    # top_pred_entity = pred_entity_list[:,0]
-    # top_entity_mention_bounds_idx = entity_mention_bounds_idx[:,0]
-    scores = torch.log_softmax(torch.tensor(cand_dists[valid_cands_mask]), 1) + torch.sigmoid(torch.tensor(mention_scores)).log().unsqueeze(-1)  # GRAPHQUESTIONS BEST
+    scores = torch.log_softmax(torch.tensor(cand_dists[valid_cands_mask]), 1) + torch.sigmoid(torch.tensor(mention_scores)).log().unsqueeze(-1)
     if top_mention_sort:
-        # scores_mask = (mention_scores > -3) | (torch.log_softmax(torch.tensor(cand_dists[valid_cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log() > -2).numpy()
-        scores_mask = (scores[:,0] > threshold)  # GRAPHQUESTIONS BEST
-        # scores_mask = (torch.sigmoid(torch.tensor(mention_scores)) > 0.25).numpy() & (biencoder_dists[valid_cands_mask][:,0] > threshold)  # WEBQSP BEST
-        # scores_mask = (mention_scores > -3) & (torch.log_softmax(torch.tensor(cand_dists[valid_cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log() > -5).numpy()
-        # scores_mask = (mention_scores > -3) & (torch.log_softmax(torch.tensor(cand_dists[valid_cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log() > -2).numpy()
-        # scores_mask = (mention_scores > -5) & ((mention_scores + cand_dists[valid_cands_mask][:,0]) > 5)
-        # scores_mask = (torch.sigmoid(torch.tensor(mention_scores)) > 0.1).numpy() & (torch.log_softmax(torch.tensor(biencoder_dists[valid_cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)) > 0).numpy()
-        # scores_mask = (mention_scores > -float("inf"))
+        scores_mask = (scores[:,0] > threshold)
         # sort...
-        # _, sorted_idxs = (torch.log_softmax(torch.tensor(biencoder_dists[valid_cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log())[scores_mask].sort()
-        # _, sorted_idxs = (torch.log_softmax(torch.tensor(biencoder_dists[i][valid_cands_mask]), 1)[:,0] + torch.sigmoid(torch.tensor(mention_scores)).log())[scores_mask].sort()
         _, sorted_idxs = scores[:,0][scores_mask].sort(descending=True)
         sorted_filtered_scores = scores[scores_mask][sorted_idxs]
-        # _, sorted_idxs = torch.tensor(biencoder_dists[valid_cands_mask][:,0][scores_mask]).sort(descending=True)  # WEBQSP BEST
-        # _, sorted_idxs = torch.tensor(mention_scores[scores_mask]).sort()
     else:
         scores_mask = (scores > threshold)  # GRAPHQUESTIONS BEST
-        try:
-            sorted_filtered_scores, sorted_idxs = scores[scores_mask].sort(descending=True)
-        except:
-            import pdb
-            pdb.set_trace()
+        sorted_filtered_scores, sorted_idxs = scores[scores_mask].sort(descending=True)
     return scores_mask.numpy(), sorted_idxs.numpy(), sorted_filtered_scores.numpy()
 
 
-all_save_dir = "/checkpoint/belindali/entity_link/saved_preds"
+all_save_dir = "saved_preds"
 model_type = "finetuned_webqsp"  # wiki
 if model_type == "wiki":
     model = '{0}_all_ents;all_mention_biencoder_all_avg_true_128_true_true_bert_large_qa_linear;15'.format(model_type)
@@ -139,13 +123,9 @@ topk = 100
 if get_topk_cands:
     threshold=-float("inf")
 else:
-    # threshold=0
-    # threshold=-2.9
-    # threshold=-1.5
     threshold=-5
 
 for data in ["nq", "WebQuestions", "triviaqa"]:
-    # TODO UNCOMMENT
     if data == "nq":
         splits = ["train0", "train1", "train2", "dev", "test"]
     else:
