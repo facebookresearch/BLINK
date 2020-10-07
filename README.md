@@ -19,8 +19,8 @@ The BLINK architecture is described in the following paper:
 @inproceedings{wu2019zero,
  title={Zero-shot Entity Linking with Dense Entity Retrieval},
  author={Ledell Wu, Fabio Petroni, Martin Josifoski, Sebastian Riedel, Luke Zettlemoyer},
- booktitle={arXiv:1911.03814},
- year={2019}
+ booktitle={EMNLP},
+ year={2020}
 }
 ```
 
@@ -35,12 +35,14 @@ ELQ does end-to-end entity linking on questions. The ELQ architecture is describ
 
 ```bibtex
 @inproceedings{li2020efficient,
- title={ Efficient One-Pass End-to-End Entity Linking for Questions },
- author={ Li, Belinda Z. and Min, Sewon and Iyer, Srinivasan and Mehdad, Yashar and Yih, Wen-tau },
- booktitle={ EMNLP },
+ title={Efficient One-Pass End-to-End Entity Linking for Questions},
+ author={Li, Belinda Z. and Min, Sewon and Iyer, Srinivasan and Mehdad, Yashar and Yih, Wen-tau},
+ booktitle={EMNLP},
  year={2020}
 }
 ```
+
+[https://arxiv.org/pdf/2010.02413.pdf](https://arxiv.org/pdf/2010.02413.pdf)
 
 For more detail on how to run ELQ, refer to the [ELQ README](https://github.com/facebookresearch/BLINK/tree/master/elq).
 
@@ -195,9 +197,6 @@ The BLINK knowledge base (entity library) is based on the 2019/08/01 Wikipedia d
 The first version of BLINK uses an [Apache Solr](https://lucene.apache.org/solr) based Information Retrieval system in combination with a BERT based cross-encoder.
 This IR-based version is now deprecated since it's outperformed by the current BLINK architecture.
 If you are interested in the old version, please refer to [this README](blink/candidate_retrieval/README.md).
-
-## The BLINK Team
-BLINK is currently maintained by Ledell Wu, Fabio Petroni and Martin Josifoski. 
 
 ## Troubleshooting
 
