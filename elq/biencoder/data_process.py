@@ -199,144 +199,6 @@ def get_context_representation_multiple_mentions_left_right(
     }
 
 
-# def get_context_representation_multiple_mentions_left_right(
-#     sample,
-#     tokenizer,
-#     max_seq_length,
-#     mention_key="mention",
-#     context_key="context",
-#     ent_start_token=ENT_START_TAG,
-#     ent_end_token=ENT_END_TAG,
-# ):
-#     '''
-#     Returns:
-#         mention bounds are [inclusive, exclusive) (make both inclusive later)
-#     '''
-#     all_mentions = sample[mention_key]
-#     all_context_lefts = sample[context_key + "_left"]
-#     all_context_rights = sample[context_key + "_right"]
-
-#     if len(all_mentions[0]) == 0 and len(all_context_lefts[0]) == 0 and len(all_context_rights[0]) == 0:  # passed in empty string
-#         context_tokens = ["[CLS]", "[SEP]"]
-#         input_ids = tokenizer.convert_tokens_to_ids(context_tokens)
-#         padding = [0] * (max_seq_length - len(input_ids))
-#         input_ids += padding
-#         assert len(input_ids) == max_seq_length
-#         return {
-#             "tokens": context_tokens,
-#             "ids": input_ids,
-#             "mention_idxs": [],
-#         }
-
-#     mention_tokens = []
-#     for mention in all_mentions:
-#         if mention and len(mention) > 0:
-#             mention_token = tokenizer.tokenize(mention)
-#             if len(mention_token) > max_seq_length - 2:	
-#                 # -2 for [CLS] and [SEP]
-#                 mention_token = mention_token[:max_seq_length - 2]
-#             mention_tokens.append(mention_token)
-#     mention_idxs = []
-
-#     assert len(all_context_lefts) == len(all_context_rights)
-#     assert len(all_context_rights) == len(all_mentions)
-
-#     context_tokens = None
-
-#     for c in range(len(all_context_lefts)):
-
-#         context_left = all_context_lefts[c]  #.lstrip()
-#         context_right = all_context_rights[c]  #.rstrip()
-
-#         context_left = tokenizer.tokenize(context_left)
-#         context_right = tokenizer.tokenize(context_right)
-
-#         # check:
-#         try:
-#             assert len(context_tokens) == len(context_left + mention_tokens[c] + context_right)
-#         except:
-#             # find substring in string
-#             print(context_tokens)
-#             print(context_left + mention_tokens[c] + context_right)
-#             print(mention_tokens[c])
-#             print(context_right)
-#             import pdb
-#             pdb.set_trace()
-        
-#         mention_idxs.append([
-#             len(context_left) + 1,  # +1 for BOS
-#             len(context_left) + len(mention_tokens[c]) + 1,  # +1 for BOS
-#         ])
-
-#     # fit first mention, then all of the others that can reasonably fit...
-#     all_mention_spans_range = [mention_idxs[0][0], mention_idxs[-1][1]]
-#     while all_mention_spans_range[1] - all_mention_spans_range[0] + 2 > max_seq_length:
-#         mention_idxs = mention_idxs[:len(mention_idxs) - 1]
-#         all_mention_spans_range = [mention_idxs[0][0], mention_idxs[-1][1]]
-    
-#     context_left = context_tokens[:all_mention_spans_range[0]-1]  #-1 since +1 before
-#     all_mention_tokens = context_tokens[all_mention_spans_range[0]-1:all_mention_spans_range[1]-1]  #-1 since +1 before
-#     context_right = context_tokens[all_mention_spans_range[1]-1:]  #-1 since +1 before
-
-#     # midpoint = (mention_idxs[0][0] + mention_idxs[-1][1]) // 2  # round to whole number
-#     # STILL TODO
-#     left_quota = (max_seq_length - len(all_mention_tokens)) // 2 - 1
-#     right_quota = max_seq_length - len(all_mention_tokens) - left_quota - 2
-#     left_add = len(context_left)
-#     right_add = len(context_right)
-#     if left_add <= left_quota:  # tokens left to add <= quota ON THE LEFT
-#         if right_add > right_quota:  # add remaining quota to right quota
-#             right_quota += left_quota - left_add
-#     else:
-#         if right_add <= right_quota:  # tokens left to add <= quota ON THE RIGHT
-#             left_quota += right_quota - right_add  # add remaining quota to left quota
-
-#     if left_quota <= 0:
-#         left_quota = -len(context_left)  # cut entire list (context_left = [])
-#     if right_quota <= 0:
-#         right_quota = 0  # cut entire list (context_right = [])
-#     context_tokens_window = context_left[-left_quota:] + all_mention_tokens + context_right[:right_quota]
-
-#     # sanity check
-#     # try:
-#     #     if len(context_tokens) <= max_seq_length - 2:
-#     #         assert context_tokens == context_tokens_window
-#     #     else:
-#     #         assert context_tokens != context_tokens_window
-#     #         cut_from_left = len(context_left) - len(context_left[-left_quota:])
-#     #         if cut_from_left > 0:
-#     #             # must shift mention_idxs
-#     #             for c in range(len(mention_idxs)):
-#     #                 mention_idxs[c] = [
-#     #                     mention_idxs[c][0] - cut_from_left, mention_idxs[c][1] - cut_from_left,
-#     #                 ]
-#     # except:
-#     #     import pdb
-#     #     pdb.set_trace()
-
-#     context_tokens_window = ["[CLS]"] + context_tokens_window + ["[SEP]"]
-
-#     input_ids = tokenizer.convert_tokens_to_ids(context_tokens_window)
-#     padding = [0] * (max_seq_length - len(input_ids))
-#     input_ids += padding
-#     assert len(input_ids) == max_seq_length
-
-#     # TODO COMMENT OUT LATER
-#     # try:
-#     #     for c, mention in enumerate(mention_idxs):
-#     #         assert context_tokens_window[mention[0]:mention[1]] == mention_tokens[c]
-#     # except:
-#     #     print(context_tokens_window[mention[0]:mention[1]])
-#     #     print(mention_tokens[c])
-#     #     print(all_mentions[c])
-#     #     print(all_context_rights[c])
-#     return {
-#         "tokens": context_tokens_window,
-#         "ids": input_ids,
-#         "mention_idxs": mention_idxs,
-#         # "pruned_ents": [1 for i in range(len(all_mentions)) if i < len(mention_idxs) else 0],  # pruned last N entities, TODO change if changed
-#     }
-
 def sort_mentions(
     lst, sort_map=None,
 ):
@@ -557,7 +419,6 @@ def process_mention_data(
             label_ids = [label_ids]
         # remove those that got pruned off
         if len(label) > len(context_tokens['mention_idxs']):
-            # TODO change based on pruned_ents if heuristic changes
             label = label[:len(context_tokens['mention_idxs'])]
             label_ids = sample["label_id"][:len(context_tokens['mention_idxs'])]
 
@@ -580,7 +441,6 @@ def process_mention_data(
         if isinstance(sample["label_id"], list):
             # multiple candidates
             if len(sample["label_id"]) > len(context_tokens['mention_idxs']):
-                # TODO change based on pruned_ents if heuristic changes
                 sample["label_id"] = sample["label_id"][:len(context_tokens['mention_idxs'])]
             label_idx = [int(id) for id in sample["label_id"]]
         else:
@@ -695,10 +555,8 @@ def process_mention_data(
     if use_world:
         data["src"] = src_vecs
         tensor_data_tuple = (context_vecs, cand_vecs, src_vecs, label_idx, mention_idx_vecs, mention_idx_mask)
-        # tensor_data = TensorDataset(context_vecs, cand_vecs, src_vecs, label_idx, mention_idx_vecs)
     else:
         tensor_data_tuple = (context_vecs, cand_vecs, label_idx, mention_idx_vecs, mention_idx_mask)
-        # tensor_data = TensorDataset(context_vecs, cand_vecs, label_idx, mention_idx_vecs)
     # save data
     if saved_context_dir is not None and not os.path.exists(os.path.join(saved_context_dir, "tensor_tuple.pt")):
         os.makedirs(saved_context_dir, exist_ok=True)

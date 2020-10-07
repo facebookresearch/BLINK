@@ -83,7 +83,6 @@ class MentionScoresHead(nn.Module):
             # log p(mention) = log p(start_pos && end_pos) = log p(start_pos) + log p(end_pos)
             # DIM: (bs, starts, ends)
             mention_scores = start_logprobs.unsqueeze(2) + end_logprobs.unsqueeze(1)
-            # do this in naive way, because I can't figure out a better way...
             # (bs, starts, ends)
             mention_cum_scores = torch.zeros(mention_scores.size(), dtype=mention_scores.dtype).to(mention_scores.device)
             # add ends
@@ -102,7 +101,6 @@ class MentionScoresHead(nn.Module):
 
             # DIM: (starts, ends, 2) -- tuples of [start_idx, end_idx]
             mention_bounds = torch.stack([
-                # torch.arange(mention_scores.size(0)).unsqueeze(-1).unsqueeze(-1).expand_as(mention_scores),  # index in batch
                 torch.arange(mention_scores.size(1)).unsqueeze(-1).expand(mention_scores.size(1), mention_scores.size(2)),  # start idxs
                 torch.arange(mention_scores.size(1)).unsqueeze(0).expand(mention_scores.size(1), mention_scores.size(2)),  # end idxs
             ], dim=-1).to(mask_ctxt.device)
@@ -203,7 +201,6 @@ class GetContextEmbedsHead(nn.Module):
                 embedding_ctxt = self.mention_agg_linear(embedding_ctxt)
                 # embedding_ctxt = (batch_size, num_spans, output_dim)
         elif self.tokens_to_aggregate == 'fl':
-            # assert 
             start_embeddings = batched_index_select(bert_output, mention_bounds[:,:,0])
             end_embeddings = batched_index_select(bert_output, mention_bounds[:,:,1])
             embedding_ctxt = torch.cat([start_embeddings.unsqueeze(2), end_embeddings.unsqueeze(2)], dim=2)
@@ -702,7 +699,7 @@ class BiEncoderRanker(torch.nn.Module):
         return embedding_cands
 
     # Score candidates given context input and label input
-    # If cand_encs is provided (pre-computed), cand_vecs is ignored
+    # If text_encs/cand_encs is provided (pre-computed), text_vecs/cand_vecs is ignored
     def score_candidate(
         self,
         text_vecs,
