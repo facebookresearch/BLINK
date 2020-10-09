@@ -42,6 +42,8 @@ ELQ does end-to-end entity linking on questions. The ELQ architecture is describ
 }
 ```
 
+[https://arxiv.org/pdf/2010.02413.pdf](https://arxiv.org/pdf/2010.02413.pdf)
+
 For more detail on how to run ELQ, refer to the [ELQ README](https://github.com/facebookresearch/BLINK/tree/master/elq).
 
 

@@ -46,9 +46,6 @@ from elq.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer, Dens
 logger = None
 np.random.seed(1234)  # reproducible for FAISS indexer
 
-# The evaluate function during training uses in-batch negatives:
-# for a batch of size B, the labels from the batch are used as label candidates
-# B is controlled by the parameter eval_batch_size
 def evaluate(
     reranker, eval_dataloader, params, device, logger,
     cand_encs=None, faiss_index=None,
@@ -217,7 +214,6 @@ def main(params):
         )
 
     # An effective batch size of `x`, when we are accumulating the gradient accross `y` batches will be achieved by having a batch size of `z = x / y`
-    # args.gradient_accumulation_steps = args.gradient_accumulation_steps // n_gpu
     params["train_batch_size"] = (
         params["train_batch_size"] // params["gradient_accumulation_steps"]
     )
@@ -243,7 +239,7 @@ def main(params):
         valid_samples = utils.read_dataset("valid", params["data_path"])
     except FileNotFoundError:
         valid_samples = utils.read_dataset("dev", params["data_path"])
-    # MUST BE DIVISBLE BY n_gpus OTHERWISE ERROR AT LAST EPOCH
+    # MUST BE DIVISBLE BY n_gpus
     if len(valid_samples) > 1024:
         valid_subset = 1024
     else:
@@ -321,7 +317,6 @@ def main(params):
             logger=logger,
             debug=params["debug"],
             add_mention_bounds=(not args.no_mention_bounds),
-            # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
             candidate_token_ids=candidate_token_ids,
             params=params,
         )
@@ -334,7 +329,6 @@ def main(params):
     optimizer = get_optimizer(model, params)
     scheduler = get_scheduler(
         params, optimizer, num_samples_per_batch,
-        # min(len(train_tensor_data_tuple[0]), num_samples_per_batch), 
         logger
     )
     if trainer_path is not None and os.path.exists(trainer_path):
@@ -367,7 +361,6 @@ def main(params):
                 logger=logger,
                 debug=params["debug"],
                 add_mention_bounds=(not args.no_mention_bounds),
-                # saved_context_dir=os.path.join(tokenized_contexts_dir, "train{}".format(train_split)),
                 candidate_token_ids=candidate_token_ids,
                 params=params,
             )
@@ -493,9 +486,6 @@ def main(params):
                 return_loss=True,
             )
 
-            # if n_gpu > 1:
-            #     loss = loss.mean() # mean() to average on multi-gpu.
-
             if grad_acc_steps > 1:
                 loss = loss / grad_acc_steps
 
@@ -594,7 +584,6 @@ if __name__ == "__main__":
     parser = ElqParser(add_model_args=True)
     parser.add_training_args()
 
-    # args = argparse.Namespace(**params)
     args = parser.parse_args()
     print(args)
 

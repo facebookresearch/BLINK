@@ -1,3 +1,10 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+#
+#!/bin/bash
 test_questions=$1  # WebQSP_EL/AIDA-YAGO2/graphquestions_EL
 subset=$2  # test/dev/train_only
 model_full=$3  # finetuned_webqsp/wiki_all_ents/webqsp_none_biencoder/zeshel_none_biencoder/pretrain_all_avg_biencoder/

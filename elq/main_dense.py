@@ -277,12 +277,10 @@ def _run_biencoder(
         with torch.no_grad():
             context_outs = biencoder.encode_context(
                 context_input, num_cand_mentions=num_cand_mentions, topK_threshold=threshold,
-                #gold_mention_bounds=batch[-2], gold_mention_bounds_mask=batch[-1],
             )
             embedding_ctxt = context_outs['mention_reps']
             left_align_mask = context_outs['mention_masks']
             chosen_mention_logits = context_outs['mention_logits']
-            #chosen_mention_logits = 99999 * context_outs['mention_masks'].float()
             chosen_mention_bounds = context_outs['mention_bounds']
 
             '''
@@ -465,7 +463,6 @@ def get_predictions(
 
             input_context = input_context[1:-1]  # remove BOS and sep
             pred_triples = [(
-                # sample['all_gold_entities'][i],
                 str(all_pred_entities_pruned[j]),
                 int(e_mention_bounds_pruned[j][0]) - 1,  # -1 for BOS
                 int(e_mention_bounds_pruned[j][1]) - 1,
@@ -625,7 +622,6 @@ def load_models(args, logger):
     biencoder_params["load_cand_enc_only"] = False
     if getattr(args, 'max_context_length', None) is not None:
         biencoder_params["max_context_length"] = args.max_context_length
-    # biencoder_params["mention_aggregation_type"] = args.mention_aggregation_type
     biencoder = load_biencoder(biencoder_params)
     if biencoder_params["no_cuda"] and type(biencoder.model).__name__ == 'DataParallel':
         biencoder.model = biencoder.model.module

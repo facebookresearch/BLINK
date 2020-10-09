@@ -18,6 +18,8 @@ The ELQ architecture is described in the following paper:
 }
 ```
 
+[https://arxiv.org/pdf/2010.02413.pdf](https://arxiv.org/pdf/2010.02413.pdf)
+
 ## Data
 The question entity linking data is under http://dl.fbaipublicfiles.com/elq/EL4QA_data.tar.gz
 
