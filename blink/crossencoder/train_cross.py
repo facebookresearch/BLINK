@@ -92,8 +92,10 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
         nb_eval_examples += context_input.size(0)
         nb_eval_steps += 1
 
-    normalized_eval_accuracy = eval_accuracy / nb_eval_examples
-    logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
+    normalized_eval_accuracy = -1
+    if nb_eval_examples > 0:
+        normalized_eval_accuracy = eval_accuracy / nb_eval_examples
+        logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
     results["normalized_accuracy"] = normalized_eval_accuracy
     results["logits"] = all_logits
     return results
