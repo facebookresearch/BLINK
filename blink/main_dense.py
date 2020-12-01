@@ -58,6 +58,7 @@ def _print_colorful_text(input_sentence, samples):
                 msg += input_sentence[int(sample["end_pos"]) :]
     else:
         msg = input_sentence
+        print("Failed to identify entity from text:")
     print("\n" + str(msg) + "\n")
 
 
@@ -277,7 +278,11 @@ def _run_crossencoder(crossencoder, dataloader, logger, context_len, device="cud
     accuracy = res["normalized_accuracy"]
     logits = res["logits"]
 
-    predictions = np.argsort(logits, axis=1)
+    if accuracy > -1:
+        predictions = np.argsort(logits, axis=1)
+    else:
+        predictions = []
+
     return accuracy, predictions, logits
 
 
@@ -556,9 +561,10 @@ def run(
                     % crossencoder_normalized_accuracy
                 )
 
-                overall_unormalized_accuracy = (
-                    crossencoder_normalized_accuracy * len(label_input) / len(samples)
-                )
+                if len(samples) > 0:
+                    overall_unormalized_accuracy = (
+                        crossencoder_normalized_accuracy * len(label_input) / len(samples)
+                    )
                 print(
                     "overall unnormalized accuracy: %.4f" % overall_unormalized_accuracy
                 )
