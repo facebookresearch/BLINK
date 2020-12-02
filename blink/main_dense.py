@@ -26,7 +26,7 @@ from blink.biencoder.data_process import (
 import blink.candidate_ranking.utils as utils
 from blink.crossencoder.train_cross import modify, evaluate
 from blink.crossencoder.data_process import prepare_crossencoder_data
-from blink.index.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer
+from blink.indexer.faiss_indexer import DenseFlatIndexer, DenseHNSWFlatIndexer
 
 
 HIGHLIGHTS = [
@@ -318,7 +318,11 @@ def load_models(args, logger=None):
         wikipedia_id2local_id,
         faiss_indexer,
     ) = _load_candidates(
-        args.entity_catalogue, args.entity_encoding, faiss_index=args.faiss_index, index_path=args.index_path, logger=logger
+        args.entity_catalogue, 
+        args.entity_encoding, 
+        faiss_index=args.faiss_index, 
+        index_path=args.index_path,
+        logger=logger,
     )
 
     return (
@@ -386,7 +390,8 @@ def run(
             _print_colorful_text(text, samples)
 
         else:
-            logger.info("test dataset mode")
+            if logger:
+                logger.info("test dataset mode")
 
             if test_data:
                 samples = test_data
@@ -410,13 +415,15 @@ def run(
         )
 
         # prepare the data for biencoder
-        logger.info("preparing data for biencoder")
+        if logger:
+            logger.info("preparing data for biencoder")
         dataloader = _process_biencoder_dataloader(
             samples, biencoder.tokenizer, biencoder_params
         )
 
         # run biencoder
-        logger.info("run biencoder")
+        if logger:
+            logger.info("run biencoder")
         top_k = args.top_k
         labels, nns, scores = _run_biencoder(
             biencoder, dataloader, candidate_encoding, top_k, faiss_indexer

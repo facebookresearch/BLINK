@@ -125,6 +125,7 @@ config = {
     "test_entities": None,
     "test_mentions": None,
     "interactive": False,
+    "top_k": 10,
     "biencoder_model": models_path+"biencoder_wiki_large.bin",
     "biencoder_config": models_path+"biencoder_wiki_large.json",
     "entity_catalogue": models_path+"entity.jsonl",
@@ -157,7 +158,7 @@ data_to_link = [ {
                 }
                 ]
 
-_, _, _, _, _, predictions, scores, = main_dense.run(args, logger=None, *models, test_data=data_to_link)
+_, _, _, _, _, predictions, scores, = main_dense.run(args, None, *models, test_data=data_to_link)
 
 ```
 
