@@ -251,7 +251,7 @@ def main(params):
         if cand_encode_path is not None:
             # Save candidate encoding to avoid re-compute
             logger.info("Saving candidate encoding to file " + cand_encode_path)
-            torch.save(cand_encode_path, candidate_encoding)
+            torch.save(candidate_encoding, cand_encode_path)
 
 
     test_samples = utils.read_dataset(params["mode"], params["data_path"])
@@ -274,7 +274,8 @@ def main(params):
         batch_size=params["encode_batch_size"]
     )
    
-    save_results = params.get("save_topk_result")
+    
+    _results = params.get("save_topk_result")
     new_data = nnquery.get_topk_predictions(
         reranker,
         test_dataloader,
