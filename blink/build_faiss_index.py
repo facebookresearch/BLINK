@@ -19,7 +19,8 @@ logger = utils.get_logger()
 def main(params): 
     output_path = params["output_path"]
     if not os.path.exists(output_path):
-        os.makedirs(output_path)
+        d,f = os.path.split(output_path)
+        os.makedirs(d)
     logger = utils.get_logger(output_path)
 
     logger.info("Loading candidate encoding from path: %s" % params["candidate_encoding"])
