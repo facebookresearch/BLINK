@@ -25,8 +25,9 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 from pytorch_transformers.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_transformers.optimization import WarmupLinearSchedule
 from pytorch_transformers.tokenization_bert import BertTokenizer
+from pytorch_transformers.modeling_utils import WEIGHTS_NAME
 
-from blink.biencoder.biencoder import BiEncoderRanker
+from blink.biencoder.biencoder import BiEncoderRanker, load_biencoder
 import logging
 
 import blink.candidate_ranking.utils as utils
@@ -115,8 +116,6 @@ def main(params):
     reranker = BiEncoderRanker(params)
     tokenizer = reranker.tokenizer
     model = reranker.model
-
-    # utils.save_model(model, tokenizer, model_output_path)
 
     device = reranker.device
     n_gpu = reranker.n_gpu
@@ -293,8 +292,11 @@ def main(params):
     # save the best model in the parent_dir
     logger.info("Best performance in epoch: {}".format(best_epoch_idx))
     params["path_to_model"] = os.path.join(
-        model_output_path, "epoch_{}".format(best_epoch_idx)
+        model_output_path, 
+        "epoch_{}".format(best_epoch_idx),
+        WEIGHTS_NAME,
     )
+    reranker = load_biencoder(params)
     utils.save_model(reranker.model, tokenizer, model_output_path)
 
     if params["evaluate"]:
@@ -305,6 +307,7 @@ def main(params):
 if __name__ == "__main__":
     parser = BlinkParser(add_model_args=True)
     parser.add_training_args()
+    parser.add_eval_args()
 
     # args = argparse.Namespace(**params)
     args = parser.parse_args()
