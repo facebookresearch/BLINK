@@ -27,7 +27,7 @@ from pytorch_transformers.optimization import WarmupLinearSchedule
 from pytorch_transformers.tokenization_bert import BertTokenizer
 
 import blink.candidate_retrieval.utils
-from blink.crossencoder.crossencoder import CrossEncoderRanker
+from blink.crossencoder.crossencoder import CrossEncoderRanker, load_crossencoder
 import logging
 
 import blink.candidate_ranking.utils as utils
@@ -73,30 +73,57 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
     nb_eval_examples = 0
     nb_eval_steps = 0
 
-    all_logits = []
+    acc = {}
+    tot = {}
+    world_size = len(WORLDS)
+    for i in range(world_size):
+        acc[i] = 0.0
+        tot[i] = 0.0
 
+    all_logits = []
+    cnt = 0
     for step, batch in enumerate(iter_):
         batch = tuple(t.to(device) for t in batch)
-        context_input, label_input = batch
+        context_input = batch[0]
+        label_input = batch[1]
+        if params["zeshel"]:
+            src = batch[2]
+            cnt += 1
         with torch.no_grad():
             eval_loss, logits = reranker(context_input, label_input, context_length)
 
         logits = logits.detach().cpu().numpy()
         label_ids = label_input.cpu().numpy()
 
-        tmp_eval_accuracy = utils.accuracy(logits, label_ids)
+        tmp_eval_accuracy, eval_result = utils.accuracy(logits, label_ids)
 
         eval_accuracy += tmp_eval_accuracy
         all_logits.extend(logits)
 
         nb_eval_examples += context_input.size(0)
+        for i in range(context_input.size(0)):
+            acc[src[i]] += eval_result[i]
+            tot[src[i]] += 1
         nb_eval_steps += 1
 
-    normalized_eval_accuracy = -1
-    if nb_eval_examples > 0:
-        normalized_eval_accuracy = eval_accuracy / nb_eval_examples
-        if logger:
-            logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
+    if params["zeshel"]:
+        macro = 0.0
+        num = 0.0 
+        for i in range(len(WORLDS)):
+            if acc[i] > 0:
+                acc[i] /= tot[i]
+                macro += acc[i]
+                num += 1
+        if num > 0:
+            logger.info("Macro accuracy: %.5f" % (macro / num))
+            logger.info("Micro accuracy: %.5f" % normalized_eval_accuracy)
+    else:
+        normalized_eval_accuracy = -1
+        if nb_eval_examples > 0:
+            normalized_eval_accuracy = eval_accuracy / nb_eval_examples
+            if logger:
+                logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
+
     results["normalized_accuracy"] = normalized_eval_accuracy
     results["logits"] = all_logits
     return results
@@ -173,7 +200,7 @@ def main(params):
     fname = os.path.join(params["data_path"], "train.t7")
     train_data = torch.load(fname)
     context_input = train_data["context_vecs"]
-    candidate_input = train_data["cand_vecs"]
+    candidate_input = train_data["candidate_vecs"]
     label_input = train_data["labels"]
     if params["debug"]:
         max_n = 200
@@ -182,8 +209,11 @@ def main(params):
         label_input = label_input[:max_n]
 
     context_input = modify(context_input, candidate_input, max_seq_length)
-
-    train_tensor_data = TensorDataset(context_input, label_input)
+    if params["zeshel"]:
+        src_input = train_data['worlds'][:len(context_input)]
+        train_tensor_data = TensorDataset(context_input, label_input, src_input)
+    else:
+        train_tensor_data = TensorDataset(context_input, label_input)
     train_sampler = RandomSampler(train_tensor_data)
 
     train_dataloader = DataLoader(
@@ -192,18 +222,23 @@ def main(params):
         batch_size=params["train_batch_size"]
     )
 
-    max_n = 2048
-    if params["debug"]:
-        max_n = 200
     fname = os.path.join(params["data_path"], "valid.t7")
     valid_data = torch.load(fname)
-    context_input = valid_data["context_vecs"][:max_n]
-    candidate_input = valid_data["cand_vecs"][:max_n]
-    label_input = valid_data["labels"][:max_n]
+    context_input = valid_data["context_vecs"]
+    candidate_input = valid_data["candidate_vecs"]
+    label_input = valid_data["labels"]
+    if params["debug"]:
+        max_n = 200
+        context_input = context_input[:max_n]
+        candidate_input = candidate_input[:max_n]
+        label_input = label_input[:max_n]
 
     context_input = modify(context_input, candidate_input, max_seq_length)
-
-    valid_tensor_data = TensorDataset(context_input, label_input)
+    if params["zeshel"]:
+        src_input = valid_data["worlds"][:len(context_input)]
+        valid_tensor_data = TensorDataset(context_input, label_input, src_input)
+    else:
+        valid_tensor_data = TensorDataset(context_input, label_input)
     valid_sampler = SequentialSampler(valid_tensor_data)
 
     valid_dataloader = DataLoader(
@@ -257,7 +292,8 @@ def main(params):
         part = 0
         for step, batch in enumerate(iter_):
             batch = tuple(t.to(device) for t in batch)
-            context_input, label_input = batch
+            context_input = batch[0] 
+            label_input = batch[1]
             loss, _ = reranker(context_input, label_input, context_length)
 
             # if n_gpu > 1:
@@ -343,14 +379,12 @@ def main(params):
     params["path_to_model"] = os.path.join(
         model_output_path, "epoch_{}".format(best_epoch_idx)
     )
-    # utils.save_model(reranker.model, tokenizer, model_output_path)
-    # reranker = utils.get_biencoder(params)
-    # reranker.save(model_output_path)
 
 
 if __name__ == "__main__":
     parser = BlinkParser(add_model_args=True)
     parser.add_training_args()
+    parser.add_eval_args()
 
     # args = argparse.Namespace(**params)
     args = parser.parse_args()
