@@ -35,11 +35,18 @@ world_to_id = {src : k for k, src in enumerate(WORLDS)}
 
 def load_entity_dict_zeshel(logger, params):
     entity_dict = {}
-    for i, src in enumerate(WORLDS):
-        if i < 8 or i > 11:
-            continue
-        #if i >=8 :
-        #    continue
+    # different worlds in train/valid/test
+    if params["mode"] == "train":
+        start_idx = 0
+        end_idx = 8
+    elif params["mode"] == "valid":
+        start_idx = 8
+        end_idx = 12
+    else:
+        start_idx = 12
+        end_idx = 16
+    # load data
+    for i, src in enumerate(WORLDS[start_idx:end_idx]):
         fname = DOC_PATH + src + ".json"
         cur_dict = {}
         doc_list = []

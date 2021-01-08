@@ -36,6 +36,7 @@ def get_topk_predictions(
     nn_context = []
     nn_candidates = []
     nn_labels = []
+    nn_worlds = []
     stats = {}
 
     if is_zeshel:
@@ -45,6 +46,8 @@ def get_topk_predictions(
         world_size = 1
         candidate_pool = [candidate_pool]
         cand_encode_list = [cand_encode_list]
+
+    logger.info("World size : %d" % world_size)
 
     for i in range(world_size):
         stats[i] = Stats(top_k)
@@ -94,6 +97,7 @@ def get_topk_predictions(
             nn_context.append(context_input[i].cpu().tolist())
             nn_candidates.append(cur_candidates.cpu().tolist())
             nn_labels.append(pointer)
+            nn_worlds.append(src)
 
     res = Stats(top_k)
     for src in range(world_size):
@@ -115,6 +119,9 @@ def get_topk_predictions(
         'candidate_vecs': nn_candidates,
         'labels': nn_labels,
     }
+
+    if is_zeshel:
+        nn_data["worlds"] = torch.LongTensor(nn_worlds)
     
     return nn_data
 

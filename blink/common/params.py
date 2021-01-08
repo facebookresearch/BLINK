@@ -183,10 +183,6 @@ class BlinkParser(argparse.ArgumentParser):
             "--train_batch_size", default=8, type=int, 
             help="Total batch size for training."
         )
-        parser.add_argument(
-            "--eval_batch_size", default=8, type=int,
-            help="Total batch size for evaluation.",
-        )
         parser.add_argument("--max_grad_norm", default=1.0, type=float)
         parser.add_argument(
             "--learning_rate",
@@ -201,13 +197,13 @@ class BlinkParser(argparse.ArgumentParser):
             help="Number of training epochs.",
         )
         parser.add_argument(
-            "--print_interval", type=int, default=5, 
+            "--print_interval", type=int, default=10, 
             help="Interval of loss printing",
         )
         parser.add_argument(
            "--eval_interval",
             type=int,
-            default=40,
+            default=100,
             help="Interval for evaluation during training",
         )
         parser.add_argument(
@@ -243,6 +239,10 @@ class BlinkParser(argparse.ArgumentParser):
         Add model evaluation args.
         """
         parser = self.add_argument_group("Model Evaluation Arguments")
+        parser.add_argument(
+            "--eval_batch_size", default=8, type=int,
+            help="Total batch size for evaluation.",
+        )
         parser.add_argument(
             "--mode",
             default="valid",
