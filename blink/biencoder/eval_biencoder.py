@@ -271,7 +271,7 @@ def main(params):
     test_dataloader = DataLoader(
         test_tensor_data, 
         sampler=test_sampler, 
-        batch_size=params["encode_batch_size"]
+        batch_size=params["eval_batch_size"]
     )
    
     
@@ -289,10 +289,13 @@ def main(params):
     )
 
     if save_results: 
-        save_data_path = os.path.join(
-            params['output_path'], 
-            'candidates_%s_top%d.t7' % (params['mode'], params['top_k'])
+        save_data_dir = os.path.join(
+            params['output_path'],
+            "top%d_candidates" % params['top_k'],
         )
+        if not os.path.exists(save_path_dir):
+            os.makedirs(save_path_dir)
+        save_data_path = os.path.join(save_path_dir, "%s.t7" % params['mode'])
         torch.save(new_data, save_data_path)
 
 
@@ -304,4 +307,9 @@ if __name__ == "__main__":
     print(args)
 
     params = args.__dict__
-    main(params)
+
+    mode_list = params["mode"].split(',')
+    for mode in mode_list:
+        new_params = params
+        new_params["mode"] = mode
+        main(new_params)

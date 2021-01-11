@@ -85,7 +85,7 @@ def eval_precision_bm45_dataloader(dataloader, ks=[1, 5, 10], number_of_samples=
 
 def accuracy(out, labels):
     outputs = np.argmax(out, axis=1)
-    return np.sum(outputs == labels)
+    return np.sum(outputs == labels), outputs == labels
 
 
 def remove_module_from_state_dict(state_dict):
