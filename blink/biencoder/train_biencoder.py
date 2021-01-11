@@ -68,7 +68,7 @@ def evaluate(
         label_ids = torch.LongTensor(
                 torch.arange(params["eval_batch_size"])
         ).numpy()
-        tmp_eval_accuracy = utils.accuracy(logits, label_ids)
+        tmp_eval_accuracy, _ = utils.accuracy(logits, label_ids)
 
         eval_accuracy += tmp_eval_accuracy
 
