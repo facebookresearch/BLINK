@@ -83,12 +83,12 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
     all_logits = []
     cnt = 0
     for step, batch in enumerate(iter_):
-        batch = tuple(t.to(device) for t in batch)
-        context_input = batch[0]
-        label_input = batch[1]
         if params["zeshel"]:
             src = batch[2]
             cnt += 1
+        batch = tuple(t.to(device) for t in batch)
+        context_input = batch[0]
+        label_input = batch[1]
         with torch.no_grad():
             eval_loss, logits = reranker(context_input, label_input, context_length)
 
@@ -102,10 +102,14 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
 
         nb_eval_examples += context_input.size(0)
         for i in range(context_input.size(0)):
-            acc[src[i]] += eval_result[i]
-            tot[src[i]] += 1
+            src_w = src[i].item()
+            acc[src_w] += eval_result[i]
+            tot[src_w] += 1
         nb_eval_steps += 1
 
+    normalized_eval_accuracy = -1
+    if nb_eval_examples > 0:
+        normalized_eval_accuracy = eval_accuracy / nb_eval_examples
     if params["zeshel"]:
         macro = 0.0
         num = 0.0 
@@ -118,11 +122,8 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
             logger.info("Macro accuracy: %.5f" % (macro / num))
             logger.info("Micro accuracy: %.5f" % normalized_eval_accuracy)
     else:
-        normalized_eval_accuracy = -1
-        if nb_eval_examples > 0:
-            normalized_eval_accuracy = eval_accuracy / nb_eval_examples
-            if logger:
-                logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
+        if logger:
+            logger.info("Eval accuracy: %.5f" % normalized_eval_accuracy)
 
     results["normalized_accuracy"] = normalized_eval_accuracy
     results["logits"] = all_logits

@@ -126,7 +126,7 @@ def encode_candidate(
     logger,
     is_zeshel,
 ):
-    if zeshel:
+    if is_zeshel:
         src = 0
         cand_encode_dict = {}
         for src, cand_pool in candidate_pool.items():
@@ -137,7 +137,7 @@ def encode_candidate(
                 encode_batch_size,
                 silent,
                 logger,
-                is_zeshel = False,
+                is_zeshel=False,
             )
             cand_encode_dict[src] = cand_pool_encode
         return cand_encode_dict
@@ -238,13 +238,12 @@ def main(params):
 
     if candidate_encoding is None:
         candidate_encoding = encode_candidate(
-            params,
             reranker,
             candidate_pool,
             params["encode_batch_size"],
             silent=params["silent"],
             logger=logger,
-            is_zeshel = params.get("zeshel", None)
+            is_zeshel=params.get("zeshel", None)
             
         )
 
@@ -273,9 +272,8 @@ def main(params):
         sampler=test_sampler, 
         batch_size=params["eval_batch_size"]
     )
-   
     
-    _results = params.get("save_topk_result")
+    save_results = params.get("save_topk_result")
     new_data = nnquery.get_topk_predictions(
         reranker,
         test_dataloader,
@@ -293,9 +291,9 @@ def main(params):
             params['output_path'],
             "top%d_candidates" % params['top_k'],
         )
-        if not os.path.exists(save_path_dir):
-            os.makedirs(save_path_dir)
-        save_data_path = os.path.join(save_path_dir, "%s.t7" % params['mode'])
+        if not os.path.exists(save_data_dir):
+            os.makedirs(save_data_dir)
+        save_data_path = os.path.join(save_data_dir, "%s.t7" % params['mode'])
         torch.save(new_data, save_data_path)
 
 
