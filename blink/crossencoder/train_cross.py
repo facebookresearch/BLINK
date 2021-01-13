@@ -101,16 +101,17 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, zeshel=T
         all_logits.extend(logits)
 
         nb_eval_examples += context_input.size(0)
-        for i in range(context_input.size(0)):
-            src_w = src[i].item()
-            acc[src_w] += eval_result[i]
-            tot[src_w] += 1
+        if zeshel:
+            for i in range(context_input.size(0)):
+                src_w = src[i].item()
+                acc[src_w] += eval_result[i]
+                tot[src_w] += 1
         nb_eval_steps += 1
 
     normalized_eval_accuracy = -1
     if nb_eval_examples > 0:
         normalized_eval_accuracy = eval_accuracy / nb_eval_examples
-    if params["zeshel"]:
+    if zeshel:
         macro = 0.0
         num = 0.0 
         for i in range(len(WORLDS)):
