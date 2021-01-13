@@ -60,7 +60,7 @@ def modify(context_input, candidate_input, max_seq_length):
     return torch.LongTensor(new_input)
 
 
-def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=True):
+def evaluate(reranker, eval_dataloader, device, logger, context_length, zeshel=True, silent=True):
     reranker.model.eval()
     if silent:
         iter_ = eval_dataloader
@@ -83,7 +83,7 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
     all_logits = []
     cnt = 0
     for step, batch in enumerate(iter_):
-        if params["zeshel"]:
+        if zeshel:
             src = batch[2]
             cnt += 1
         batch = tuple(t.to(device) for t in batch)
@@ -255,6 +255,7 @@ def main(params):
         device=device,
         logger=logger,
         context_length=context_length,
+        zeshel=params["zeshel"],
         silent=params["silent"],
     )
 
@@ -333,6 +334,7 @@ def main(params):
                     device=device,
                     logger=logger,
                     context_length=context_length,
+                    zeshel=params["zeshel"],
                     silent=params["silent"],
                 )
                 logger.info("***** Saving fine - tuned model *****")
@@ -358,6 +360,7 @@ def main(params):
             device=device,
             logger=logger,
             context_length=context_length,
+            zeshel=params["zeshel"],
             silent=params["silent"],
         )
 

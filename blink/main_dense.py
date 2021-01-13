@@ -274,7 +274,7 @@ def _run_crossencoder(crossencoder, dataloader, logger, context_len, device="cud
     accuracy = 0.0
     crossencoder.to(device)
 
-    res = evaluate(crossencoder, dataloader, device, logger, context_len, silent=False)
+    res = evaluate(crossencoder, dataloader, device, logger, context_len, zeshel=False, silent=False)
     accuracy = res["normalized_accuracy"]
     logits = res["logits"]
 
