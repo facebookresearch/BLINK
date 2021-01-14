@@ -60,7 +60,7 @@ def modify(context_input, candidate_input, max_seq_length):
     return torch.LongTensor(new_input)
 
 
-def evaluate(reranker, eval_dataloader, device, logger, context_length, zeshel=True, silent=True):
+def evaluate(reranker, eval_dataloader, device, logger, context_length, zeshel=False, silent=True):
     reranker.model.eval()
     if silent:
         iter_ = eval_dataloader
