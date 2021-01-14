@@ -60,7 +60,7 @@ def modify(context_input, candidate_input, max_seq_length):
     return torch.LongTensor(new_input)
 
 
-def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=True):
+def evaluate(reranker, eval_dataloader, device, logger, context_length, zeshel=False, silent=True):
     reranker.model.eval()
     if silent:
         iter_ = eval_dataloader
@@ -83,7 +83,7 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
     all_logits = []
     cnt = 0
     for step, batch in enumerate(iter_):
-        if params["zeshel"]:
+        if zeshel:
             src = batch[2]
             cnt += 1
         batch = tuple(t.to(device) for t in batch)
@@ -101,16 +101,17 @@ def evaluate(reranker, eval_dataloader, device, logger, context_length, silent=T
         all_logits.extend(logits)
 
         nb_eval_examples += context_input.size(0)
-        for i in range(context_input.size(0)):
-            src_w = src[i].item()
-            acc[src_w] += eval_result[i]
-            tot[src_w] += 1
+        if zeshel:
+            for i in range(context_input.size(0)):
+                src_w = src[i].item()
+                acc[src_w] += eval_result[i]
+                tot[src_w] += 1
         nb_eval_steps += 1
 
     normalized_eval_accuracy = -1
     if nb_eval_examples > 0:
         normalized_eval_accuracy = eval_accuracy / nb_eval_examples
-    if params["zeshel"]:
+    if zeshel:
         macro = 0.0
         num = 0.0 
         for i in range(len(WORLDS)):
@@ -255,6 +256,7 @@ def main(params):
         device=device,
         logger=logger,
         context_length=context_length,
+        zeshel=params["zeshel"],
         silent=params["silent"],
     )
 
@@ -333,6 +335,7 @@ def main(params):
                     device=device,
                     logger=logger,
                     context_length=context_length,
+                    zeshel=params["zeshel"],
                     silent=params["silent"],
                 )
                 logger.info("***** Saving fine - tuned model *****")
@@ -358,6 +361,7 @@ def main(params):
             device=device,
             logger=logger,
             context_length=context_length,
+            zeshel=params["zeshel"],
             silent=params["silent"],
         )
 
