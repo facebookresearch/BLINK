@@ -264,11 +264,11 @@ class BlinkParser(argparse.ArgumentParser):
             "--cand_pool_path",
             default=None,
             type=str,
-            help="Path for candidate pool",
+            help="Path for cached candidate pool (id tokenization of candidates)",
         )
         parser.add_argument(
             "--cand_encode_path",
             default=None,
             type=str,
-            help="Path for candidate encoding",
+            help="Path for cached candidate encoding",
         )
