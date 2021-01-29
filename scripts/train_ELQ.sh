@@ -21,5 +21,5 @@ then
     epoch=-1
 fi
 
-bash elq_slurm_scripts/train_elq.sh $data all_avg $objective $train_batch_size $max_context_length true true large qa_linear 0 -1 $epoch $eval_batch_size $base_data $base_epoch
+bash elq_slurm_scripts/train_elq.sh $data all_avg $objective $train_batch_size $max_context_length false false large qa_linear 0 -1 $epoch $eval_batch_size $base_data $base_epoch
 
