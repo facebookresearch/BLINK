@@ -37,7 +37,7 @@ chmod +x download_elq_models.sh
 ./download_elq_models.sh
 ```
 
-To download the flat (exact search) indexer, you may use the same flat index as BLINK: [BLINK flat index](http://dl.fbaipublicfiles.com/BLINK/faiss_flat_index.pkl)
+To download the flat (exact search) indexer, you may use the same flat index as BLINK: [BLINK flat index](http://dl.fbaipublicfiles.com/BLINK//faiss_flat_index.pkl)
 
 To build and save FAISS (exact search) index yourself, run
 `python blink/build_faiss_index.py --output_path models/faiss_flat_index.pkl`
