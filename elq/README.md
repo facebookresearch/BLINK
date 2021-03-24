@@ -28,7 +28,7 @@ The question entity linking data is under http://dl.fbaipublicfiles.com/elq/EL4Q
 1. Create conda environment and install requirements (this step can be skipped if you've already created an environment for BLINK)
 ```console
 conda create -n el4qa -y python=3.7 && conda activate el4qa
-pip install -r requirements.txt
+pip install -r elq/requirements.txt
 ```
 
 2. Download the pretrained models, indices, and entity embeddings
