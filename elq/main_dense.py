@@ -229,9 +229,13 @@ def _process_biencoder_dataloader(samples, tokenizer, biencoder_params, logger):
         max_seq_len = 0
         for sample in samples:
             samples_text_tuple
-            encoded_sample = [101] + tokenizer.encode(sample['text']) + [102]
+            # truncate the end if the sequence is too long...
+            encoded_sample = [101] + tokenizer.encode(sample['text'])[:biencoder_params["max_context_length"]-2] + [102]
             max_seq_len = max(len(encoded_sample), max_seq_len)
             samples_text_tuple.append(encoded_sample + [0 for _ in range(biencoder_params["max_context_length"] - len(encoded_sample))])
+
+            # print(samples_text_tuple)
+
         tensor_data_tuple = [torch.tensor(samples_text_tuple)]
     tensor_data = TensorDataset(*tensor_data_tuple)
     sampler = SequentialSampler(tensor_data)
