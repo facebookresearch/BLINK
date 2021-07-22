@@ -363,10 +363,13 @@ def run(
         )
         raise ValueError(msg)
 
-    id2url = {
-        v: "https://en.wikipedia.org/wiki?curid=%s" % k
-        for k, v in wikipedia_id2local_id.items()
-    }
+    if args.interactive:
+        id2url = {
+            v: "https://en.wikipedia.org/wiki?curid=%s" % k
+            for k, v in wikipedia_id2local_id.items()
+        }
+    else:
+        id2url = {}
 
     stopping_condition = False
     while not stopping_condition:
