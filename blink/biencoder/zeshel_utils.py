@@ -56,7 +56,7 @@ def load_entity_dict_zeshel(logger, params):
                 line = line.rstrip()
                 item = json.loads(line)
                 text = item["text"]
-                doc_list.append(text[:256])
+                doc_list.append(" ".join(text.split()[:128]))
 
                 if params["debug"]:
                     if len(doc_list) > 200:
