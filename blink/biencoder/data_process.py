@@ -36,6 +36,10 @@ def get_context_representation(
     if sample[mention_key] and len(sample[mention_key]) > 0:
         mention_tokens = tokenizer.tokenize(sample[mention_key])
         mention_tokens = [ent_start_token] + mention_tokens + [ent_end_token]
+    # Make sure that mention_tokens do not exceed max_seq_length
+    # And that at least one token from left and right context are used (left_quota >= 1, right_quota >= 1)
+    assert max_seq_length > 4
+    mention_tokens = mention_tokens[:max_seq_length - 4]
 
     context_left = sample[context_key + "_left"]
     context_right = sample[context_key + "_right"]
