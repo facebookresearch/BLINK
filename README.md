@@ -73,7 +73,7 @@ We additionally provide a [FAISS](https://github.com/facebookresearch/faiss) ind
 
 
 To build and save FAISS (exact search) index yourself, run
-`python blink/build_faiss_index.py --output_path models/faiss_flat_index.pkl`
+`python blink/build_faiss_index.py --output_path models/faiss_flat_index.pkl --save_index`
 
 
 ### 3. Use BLINK interactively
