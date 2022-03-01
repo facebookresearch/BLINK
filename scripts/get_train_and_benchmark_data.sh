@@ -13,9 +13,8 @@ fi
 
 fileid="1IDjXFnNnHf__MO5j_onw4YwR97oS8lAy"
 filename="data/train_and_benchmark_data.zip"
-curl -c ./cookie -s -L "https://drive.google.com/uc?export=download&id=${fileid}" > /dev/null
-curl -Lb ./cookie "https://drive.google.com/uc?export=download&confirm=`awk '/download/ {print $NF}' ./cookie`&id=${fileid}" -o ${filename}
-rm cookie
+html=`curl -c ./cookie -s -L "https://drive.google.com/uc?export=download&id=${fileid}"`
+curl -Lb ./cookie "https://drive.google.com/uc?export=download&`echo ${html}|grep -Po '(confirm=[a-zA-Z0-9\-_]+)'`&id=${fileid}" -o ${filename}
 
 unzip -d $benchmark_data_folder $filename
 rm $filename
