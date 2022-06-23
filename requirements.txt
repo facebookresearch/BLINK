@@ -13,3 +13,4 @@ transformers==3.1.0
 colorama==0.4.3
 termcolor==1.1.0
 faiss-cpu>=1.6.1
+gensim==3.8.3
