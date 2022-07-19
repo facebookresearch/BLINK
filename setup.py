@@ -40,4 +40,5 @@ setup(
         "termcolor>=1.1.0",
         "faiss-cpu>=1.6.1",
     ],
+    py_modules=[]
 )
