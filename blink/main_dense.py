@@ -479,12 +479,16 @@ def run(
             if args.fast:
 
                 predictions = []
+                prediction_ids = []
                 for entity_list in nns:
                     sample_prediction = []
+                    sample_prediction_ids = []
                     for e_id in entity_list:
                         e_title = id2title[e_id]
                         sample_prediction.append(e_title)
+                        sample_prediction_ids.append(e_id)
                     predictions.append(sample_prediction)
+                    prediction_ids.append(sample_prediction_ids)
 
                 # use only biencoder
                 return (
@@ -495,6 +499,7 @@ def run(
                     len(samples),
                     predictions,
                     scores,
+                    prediction_ids,
                 )
 
         # prepare crossencoder data
