@@ -269,7 +269,7 @@ def _process_crossencoder_dataloader(context_input, label_input, crossencoder_pa
     return dataloader
 
 
-def _run_crossencoder(crossencoder, dataloader, logger, context_len, device="cuda"):
+def _run_crossencoder(crossencoder, dataloader, logger, context_len, device="cpu"):
     crossencoder.model.eval()
     accuracy = 0.0
     crossencoder.to(device)
@@ -479,12 +479,16 @@ def run(
             if args.fast:
 
                 predictions = []
+                prediction_ids = []
                 for entity_list in nns:
                     sample_prediction = []
+                    sample_prediction_ids = []
                     for e_id in entity_list:
                         e_title = id2title[e_id]
                         sample_prediction.append(e_title)
+                        sample_prediction_ids.append(e_id)
                     predictions.append(sample_prediction)
+                    prediction_ids.append(sample_prediction_ids)
 
                 # use only biencoder
                 return (
@@ -495,6 +499,7 @@ def run(
                     len(samples),
                     predictions,
                     scores,
+                    prediction_ids,
                 )
 
         # prepare crossencoder data
@@ -540,6 +545,7 @@ def run(
 
             scores = []
             predictions = []
+            prediction_ids = []
             for entity_list, index_list, scores_list in zip(
                 nns, index_array, unsorted_scores
             ):
@@ -551,13 +557,16 @@ def run(
 
                 sample_prediction = []
                 sample_scores = []
+                sample_prediction_ids = []
                 for index in index_list:
                     e_id = entity_list[index]
                     e_title = id2title[e_id]
                     sample_prediction.append(e_title)
                     sample_scores.append(scores_list[index])
+                    sample_prediction_ids.append(e_id)
                 predictions.append(sample_prediction)
                 scores.append(sample_scores)
+                prediction_ids.append(sample_prediction_ids)
 
             crossencoder_normalized_accuracy = -1
             overall_unormalized_accuracy = -1
@@ -583,6 +592,7 @@ def run(
                 len(samples),
                 predictions,
                 scores,
+                prediction_ids,
             )
 
 
