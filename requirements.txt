@@ -9,7 +9,7 @@ numpy==1.17.2
 segtok==1.5.7
 flair==0.6.1
 pytorch-transformers==1.2.0
-transformers==3.1.0
+transformers==4.30.0
 colorama==0.4.3
 termcolor==1.1.0
 faiss-cpu>=1.6.1
