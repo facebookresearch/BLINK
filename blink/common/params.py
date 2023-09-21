@@ -267,6 +267,12 @@ class BlinkParser(argparse.ArgumentParser):
             help="Path for cached candidate pool (id tokenization of candidates)",
         )
         parser.add_argument(
+            "--entity_dict_path",
+            default=None,
+            type=str,
+            help="Path for entity dictionary",
+        )
+        parser.add_argument(
             "--cand_encode_path",
             default=None,
             type=str,

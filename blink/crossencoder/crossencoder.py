@@ -14,6 +14,9 @@ from collections import OrderedDict
 from tqdm import tqdm
 from pytorch_transformers.modeling_utils import CONFIG_NAME, WEIGHTS_NAME
 
+from transformers import AutoConfig, AutoModel
+from transformers import AutoTokenizer
+
 from pytorch_transformers.modeling_bert import (
     BertPreTrainedModel,
     BertConfig,
@@ -43,10 +46,11 @@ class CrossEncoderModule(torch.nn.Module):
     def __init__(self, params, tokenizer):
         super(CrossEncoderModule, self).__init__()
         model_path = params["bert_model"]
-        if params.get("roberta"):
-            encoder_model = RobertaModel.from_pretrained(model_path)
-        else:
-            encoder_model = BertModel.from_pretrained(model_path)
+        # if params.get("roberta"):
+        #     encoder_model = RobertaModel.from_pretrained(model_path)
+        # else:
+        #     encoder_model = BertModel.from_pretrained(model_path)
+        encoder_model = AutoModel.from_pretrained(model_path)
         encoder_model.resize_token_embeddings(len(tokenizer))
         self.encoder = BertEncoder(
             encoder_model,
@@ -73,9 +77,14 @@ class CrossEncoderRanker(torch.nn.Module):
         self.n_gpu = torch.cuda.device_count()
 
         if params.get("roberta"):
-            self.tokenizer = RobertaTokenizer.from_pretrained(params["bert_model"],)
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                params["bert_model"], do_lower_case=params["lowercase"]
+            )
         else:
-            self.tokenizer = BertTokenizer.from_pretrained(
+            # self.tokenizer = BertTokenizer.from_pretrained(
+            #     params["bert_model"], do_lower_case=params["lowercase"]
+            # )
+            self.tokenizer = AutoTokenizer.from_pretrained(
                 params["bert_model"], do_lower_case=params["lowercase"]
             )
 
@@ -94,7 +103,7 @@ class CrossEncoderRanker(torch.nn.Module):
         # init model
         self.build_model()
         if params["path_to_model"] is not None:
-            self.load_model(params["path_to_model"])
+            self.load_model(params["path_to_model"], params["no_cuda"])
 
         self.model = self.model.to(self.device)
         self.data_parallel = params.get("data_parallel")
@@ -103,7 +112,7 @@ class CrossEncoderRanker(torch.nn.Module):
 
     def load_model(self, fname, cpu=False):
         if cpu:
-            state_dict = torch.load(fname, map_location=lambda storage, location: "cpu")
+            state_dict = torch.load(fname, map_location=self.device)
         else:
             state_dict = torch.load(fname)
         self.model.load_state_dict(state_dict)
