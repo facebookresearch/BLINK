@@ -32,9 +32,8 @@ class BertEncoder(nn.Module):
             import pdb
             pdb.set_trace()
         try:
-            output_bert, output_pooler, _ = self.bert_model(
-                token_ids, segment_ids, attention_mask
-            )
+            output = self.bert_model(input_ids=token_ids, token_type_ids=segment_ids, attention_mask=attention_mask)
+            output_bert, output_pooler = output.last_hidden_state, output.pooler_output
         except RuntimeError as e:
             print(token_ids.size())
             print(segment_ids.size())
