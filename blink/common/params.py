@@ -16,7 +16,16 @@ import datetime
 ENT_START_TAG = "[unused0]"
 ENT_END_TAG = "[unused1]"
 ENT_TITLE_TAG = "[unused2]"
+BERT_START_TOKEN = "[CLS]"
+BERT_END_TOKEN = "[SEP]"
 
+def set_constant_tokens(params):
+    if params["roberta"]:
+        BERT_START_TOKEN = "<s>"
+        BERT_END_TOKEN = "</s>"
+        ENT_START_TAG = "madeupword0000"
+        ENT_END_TAG = "madeupword0001"
+        ENT_TITLE_TAG = "madeupword0002"
 
 class BlinkParser(argparse.ArgumentParser):
     """
@@ -85,7 +94,7 @@ class BlinkParser(argparse.ArgumentParser):
         )
         parser.add_argument(
             "--zeshel",
-            default=True,
+            default=False,
             type=bool,
             help="Whether the dataset is from zeroshot.",
         )
@@ -233,6 +242,9 @@ class BlinkParser(argparse.ArgumentParser):
             "--shuffle", type=bool, default=False, 
             help="Whether to shuffle train data",
         )
+        parser.add_argument(
+            "--roberta", action="store_true", help="Is the bert model roberta or not",
+        )
 
     def add_eval_args(self, args=None):
         """
@@ -277,4 +289,7 @@ class BlinkParser(argparse.ArgumentParser):
             default=None,
             type=str,
             help="Path for cached candidate encoding",
+        )
+        parser.add_argument(
+            "--roberta", action="store_true", help="Is the bert model roberta or not",
         )

@@ -14,7 +14,7 @@ from pytorch_transformers.tokenization_bert import BertTokenizer
 
 from blink.biencoder.zeshel_utils import world_to_id
 from blink.common.params import ENT_START_TAG, ENT_END_TAG, ENT_TITLE_TAG
-
+from blink.common.params import BERT_START_TOKEN, BERT_END_TOKEN
 
 def select_field(data, key1, key2=None):
     if key2 is None:
@@ -56,8 +56,8 @@ def get_context_representation(
     context_tokens = (
         context_left[-left_quota:] + mention_tokens + context_right[:right_quota]
     )
-
-    context_tokens = ["[CLS]"] + context_tokens + ["[SEP]"]
+    context_tokens = context_tokens[0: max_seq_length - 2]
+    context_tokens = [BERT_START_TOKEN] + context_tokens + [BERT_END_TOKEN]
     input_ids = tokenizer.convert_tokens_to_ids(context_tokens)
     padding = [0] * (max_seq_length - len(input_ids))
     input_ids += padding

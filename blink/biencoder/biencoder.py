@@ -17,6 +17,7 @@ from pytorch_transformers.tokenization_bert import BertTokenizer
 
 from blink.common.ranker_base import BertEncoder, get_model_obj
 from blink.common.optimizer import get_bert_optimizer
+from blink.common.params import BERT_START_TOKEN, BERT_END_TOKEN
 
 
 def load_biencoder(params):
@@ -76,8 +77,8 @@ class BiEncoderRanker(torch.nn.Module):
         self.n_gpu = torch.cuda.device_count()
         # init tokenizer
         self.NULL_IDX = 0
-        self.START_TOKEN = "[CLS]"
-        self.END_TOKEN = "[SEP]"
+        self.START_TOKEN = BERT_START_TOKEN
+        self.END_TOKEN = BERT_END_TOKEN
         self.tokenizer = AutoTokenizer.from_pretrained(
             params["bert_model"], do_lower_case=params["lowercase"]
         )
@@ -94,7 +95,7 @@ class BiEncoderRanker(torch.nn.Module):
 
     def load_model(self, fname, cpu=False):
         if cpu:
-            state_dict = torch.load(fname, map_location=lambda storage, location: "cpu")
+            state_dict = torch.load(fname, map_location=self.device)
         else:
             state_dict = torch.load(fname)
         self.model.load_state_dict(state_dict)
