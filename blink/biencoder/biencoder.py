@@ -10,17 +10,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
-
-from pytorch_transformers.modeling_bert import (
-    BertPreTrainedModel,
-    BertConfig,
-    BertModel,
-)
+from transformers import AutoConfig, AutoModel
+from transformers import AutoTokenizer
 
 from pytorch_transformers.tokenization_bert import BertTokenizer
 
 from blink.common.ranker_base import BertEncoder, get_model_obj
 from blink.common.optimizer import get_bert_optimizer
+from blink.common.params import BERT_START_TOKEN, BERT_END_TOKEN
 
 
 def load_biencoder(params):
@@ -32,8 +29,8 @@ def load_biencoder(params):
 class BiEncoderModule(torch.nn.Module):
     def __init__(self, params):
         super(BiEncoderModule, self).__init__()
-        ctxt_bert = BertModel.from_pretrained(params["bert_model"])
-        cand_bert = BertModel.from_pretrained(params['bert_model'])
+        ctxt_bert = AutoModel.from_pretrained(params["bert_model"])
+        cand_bert = AutoModel.from_pretrained(params['bert_model'])
         self.context_encoder = BertEncoder(
             ctxt_bert,
             params["out_dim"],
@@ -49,13 +46,13 @@ class BiEncoderModule(torch.nn.Module):
         self.config = ctxt_bert.config
 
     def forward(
-        self,
-        token_idx_ctxt,
-        segment_idx_ctxt,
-        mask_ctxt,
-        token_idx_cands,
-        segment_idx_cands,
-        mask_cands,
+            self,
+            token_idx_ctxt,
+            segment_idx_ctxt,
+            mask_ctxt,
+            token_idx_cands,
+            segment_idx_cands,
+            mask_cands,
     ):
         embedding_ctxt = None
         if token_idx_ctxt is not None:
@@ -80,16 +77,16 @@ class BiEncoderRanker(torch.nn.Module):
         self.n_gpu = torch.cuda.device_count()
         # init tokenizer
         self.NULL_IDX = 0
-        self.START_TOKEN = "[CLS]"
-        self.END_TOKEN = "[SEP]"
-        self.tokenizer = BertTokenizer.from_pretrained(
+        self.START_TOKEN = BERT_START_TOKEN
+        self.END_TOKEN = BERT_END_TOKEN
+        self.tokenizer = AutoTokenizer.from_pretrained(
             params["bert_model"], do_lower_case=params["lowercase"]
         )
         # init model
         self.build_model()
         model_path = params.get("path_to_model", None)
         if model_path is not None:
-            self.load_model(model_path)
+            self.load_model(model_path, params["no_cuda"])
 
         self.model = self.model.to(self.device)
         self.data_parallel = params.get("data_parallel")
@@ -98,7 +95,7 @@ class BiEncoderRanker(torch.nn.Module):
 
     def load_model(self, fname, cpu=False):
         if cpu:
-            state_dict = torch.load(fname, map_location=lambda storage, location: "cpu")
+            state_dict = torch.load(fname, map_location=self.device)
         else:
             state_dict = torch.load(fname)
         self.model.load_state_dict(state_dict)
@@ -109,7 +106,7 @@ class BiEncoderRanker(torch.nn.Module):
     def save_model(self, output_dir):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        model_to_save = get_model_obj(self.model) 
+        model_to_save = get_model_obj(self.model)
         output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
         output_config_file = os.path.join(output_dir, CONFIG_NAME)
         torch.save(model_to_save.state_dict(), output_model_file)
@@ -122,7 +119,7 @@ class BiEncoderRanker(torch.nn.Module):
             self.params["learning_rate"],
             fp16=self.params.get("fp16"),
         )
- 
+
     def encode_context(self, cands):
         token_idx_cands, segment_idx_cands, mask_cands = to_bert_input(
             cands, self.NULL_IDX
@@ -146,11 +143,11 @@ class BiEncoderRanker(torch.nn.Module):
     # Score candidates given context input and label input
     # If cand_encs is provided (pre-computed), cand_ves is ignored
     def score_candidate(
-        self,
-        text_vecs,
-        cand_vecs,
-        random_negs=True,
-        cand_encs=None,  # pre-computed candidate encoding.
+            self,
+            text_vecs,
+            cand_vecs,
+            random_negs=True,
+            cand_encs=None,  # pre-computed candidate encoding.
     ):
         # Encode contexts first
         token_idx_ctxt, segment_idx_ctxt, mask_ctxt = to_bert_input(

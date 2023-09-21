@@ -25,6 +25,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 from pytorch_transformers.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_transformers.optimization import WarmupLinearSchedule
 from pytorch_transformers.tokenization_bert import BertTokenizer
+from pytorch_transformers.modeling_utils import WEIGHTS_NAME
 
 import blink.candidate_retrieval.utils
 from blink.crossencoder.crossencoder import CrossEncoderRanker, load_crossencoder
@@ -384,6 +385,17 @@ def main(params):
     params["path_to_model"] = os.path.join(
         model_output_path, "epoch_{}".format(best_epoch_idx)
     )
+
+    params["path_to_model"] = os.path.join(
+        model_output_path,
+        "epoch_{}".format(best_epoch_idx),
+        WEIGHTS_NAME,
+    )
+    cross_model = load_crossencoder(params)
+    utils.save_model(reranker.model, tokenizer, model_output_path)
+    if params["evaluate"]:
+        params["path_to_model"] = model_output_path
+        evaluate(params, logger=logger)
 
 
 if __name__ == "__main__":

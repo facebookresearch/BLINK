@@ -21,6 +21,8 @@ from tqdm import tqdm
 
 from pytorch_transformers.optimization import AdamW, WarmupLinearSchedule
 from pytorch_transformers.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
+from blink.common.params import BERT_START_TOKEN, BERT_END_TOKEN
+from blink.common.params import ENT_START_TAG, ENT_END_TAG
 
 
 class BertForReranking(BertPreTrainedModel):
@@ -308,7 +310,7 @@ class BertReranker:
         candidate_desc_tokens = candidate_desc_tokens[:max_sub_seq_length]
 
         tokens = (
-            ["[CLS]"] + context_tokens + ["[SEP]"] + candidate_desc_tokens + ["[SEP]"]
+                [BERT_START_TOKEN] + context_tokens + [BERT_END_TOKEN] + candidate_desc_tokens + [BERT_END_TOKEN]
         )
         segment_ids = [0] * (len(context_tokens) + 2) + [1] * (
             len(candidate_desc_tokens) + 1
@@ -391,20 +393,20 @@ class BertReranker:
 
     @staticmethod
     def _process_mentions_for_model(
-        context_key,
-        mentions,
-        tokenizer,
-        max_seq_length,
-        top_k,
-        silent,
-        start_token="[unused0]",
-        end_token="[unused1]",
-        debug=False,
-        tagged=True,
-        sentences=None,
-        candidates_key="candidates",
-        gold_key="gold_pos",
-        logger=None,
+            context_key,
+            mentions,
+            tokenizer,
+            max_seq_length,
+            top_k,
+            silent,
+            start_token=ENT_START_TAG,
+            end_token=ENT_END_TAG,
+            debug=False,
+            tagged=True,
+            sentences=None,
+            candidates_key="candidates",
+            gold_key="gold_pos",
+            logger=None,
     ):
         processed_mentions = []
 

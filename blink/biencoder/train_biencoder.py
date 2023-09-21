@@ -34,8 +34,7 @@ import blink.candidate_ranking.utils as utils
 import blink.biencoder.data_process as data
 from blink.biencoder.zeshel_utils import DOC_PATH, WORLDS, world_to_id
 from blink.common.optimizer import get_bert_optimizer
-from blink.common.params import BlinkParser
-
+from blink.common.params import BlinkParser, set_constant_tokens
 
 logger = None
 
@@ -107,6 +106,8 @@ def get_scheduler(params, optimizer, len_train_data, logger):
 
 
 def main(params):
+    set_constant_tokens(params)
+
     model_output_path = params["output_path"]
     if not os.path.exists(model_output_path):
         os.makedirs(model_output_path)

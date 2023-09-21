@@ -241,6 +241,7 @@ def _run_biencoder(biencoder, dataloader, candidate_encoding, top_k=100, indexer
     all_scores = []
     for batch in tqdm(dataloader):
         context_input, _, label_ids = batch
+        context_input = context_input.to(device=biencoder.device)
         with torch.no_grad():
             if indexer is not None:
                 context_encoding = biencoder.encode_context(context_input).numpy()
@@ -248,11 +249,11 @@ def _run_biencoder(biencoder, dataloader, candidate_encoding, top_k=100, indexer
                 scores, indicies = indexer.search_knn(context_encoding, top_k)
             else:
                 scores = biencoder.score_candidate(
-                    context_input, None, cand_encs=candidate_encoding  # .to(device)
+                    context_input.to(biencoder.device), None, cand_encs=candidate_encoding.to(biencoder.device)
                 )
                 scores, indicies = scores.topk(top_k)
-                scores = scores.data.numpy()
-                indicies = indicies.data.numpy()
+                scores = scores.cpu().data.numpy()
+                indicies = indicies.cpu().data.numpy()
 
         labels.extend(label_ids.data.numpy())
         nns.extend(indicies)
@@ -291,9 +292,19 @@ def load_models(args, logger=None):
     # load biencoder model
     if logger:
         logger.info("loading biencoder model")
-    with open(args.biencoder_config) as json_file:
-        biencoder_params = json.load(json_file)
-        biencoder_params["path_to_model"] = args.biencoder_model
+    try:
+        with open(args.biencoder_config) as json_file:
+            biencoder_params = json.load(json_file)
+    except json.decoder.JSONDecodeError:
+        with open(args.biencoder_config) as json_file:
+            for line in json_file:
+                line = line.replace("'", "\"")
+                line = line.replace("True", "true")
+                line = line.replace("False", "false")
+                line = line.replace("None", "null")
+                biencoder_params = json.loads(line)
+                break
+    biencoder_params["path_to_model"] = args.biencoder_model
     biencoder = load_biencoder(biencoder_params)
 
     crossencoder = None
@@ -302,9 +313,19 @@ def load_models(args, logger=None):
         # load crossencoder model
         if logger:
             logger.info("loading crossencoder model")
-        with open(args.crossencoder_config) as json_file:
-            crossencoder_params = json.load(json_file)
-            crossencoder_params["path_to_model"] = args.crossencoder_model
+        try:
+            with open(args.crossencoder_config) as json_file:
+                crossencoder_params = json.load(json_file)
+        except json.decoder.JSONDecodeError:
+            with open(args.crossencoder_config) as json_file:
+                for line in json_file:
+                    line = line.replace("'", "\"")
+                    line = line.replace("True", "true")
+                    line = line.replace("False", "false")
+                    line = line.replace("None", "null")
+                    crossencoder_params = json.loads(line)
+                    break
+        crossencoder_params["path_to_model"] = args.crossencoder_model
         crossencoder = load_crossencoder(crossencoder_params)
 
     # load candidate entities

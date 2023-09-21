@@ -21,7 +21,7 @@ import blink.biencoder.data_process as data
 import blink.biencoder.nn_prediction as nnquery
 import blink.candidate_ranking.utils as utils
 from blink.biencoder.zeshel_utils import WORLDS, load_entity_dict_zeshel, Stats
-from blink.common.params import BlinkParser
+from blink.common.params import BlinkParser, set_constant_tokens
 
 
 def load_entity_dict(logger, params, is_zeshel):
@@ -202,6 +202,7 @@ def load_or_generate_candidate_pool(
 
 
 def main(params):
+    set_constant_tokens(params)
     output_path = params["output_path"]
     if not os.path.exists(output_path):
         os.makedirs(output_path)
